@@ -1,0 +1,28 @@
+[project]
+name = "nmia"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlalchemy",
+    "alembic",
+    "psycopg2-binary",
+    "python-jose[cryptography]",
+    "passlib[bcrypt]",
+    "pydantic[email]",
+    "pydantic-settings",
+    "python-multipart",
+    "httpx",
+    "apscheduler",
+    "ldap3",
+    "cryptography",
+    "pytest",
+    "pytest-asyncio",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[project.scripts]
+nmia = "nmia.main:run"

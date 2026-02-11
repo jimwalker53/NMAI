@@ -1,0 +1,69 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: nmia
+      POSTGRES_PASSWORD: nmia
+      POSTGRES_DB: nmia
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nmia -d nmia"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: ./api
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://nmia:nmia@db:5432/nmia
+      SECRET_KEY: dev-secret-key-change-in-prod
+      PYTHONPATH: /app/src
+    command: uvicorn nmia.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./api/src:/app/src
+
+  worker:
+    build: ./worker
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://nmia:nmia@db:5432/nmia
+      SECRET_KEY: dev-secret-key-change-in-prod
+      PYTHONPATH: /app/src:/api-src
+    volumes:
+      - ./worker/src:/app/src
+      - ./api/src:/api-src
+    command: python -m nmia_worker.main
+
+  ui:
+    build: ./ui
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+    volumes:
+      - ./ui/src:/app/src
+
+  collector:
+    build: ./collector-windows
+    ports:
+      - "9000:9000"
+    environment:
+      NMIA_SERVER_URL: http://api:8000
+      PYTHONPATH: /app/src
+    volumes:
+      - ./collector-windows/src:/app/src
+
+volumes:
+  pgdata:

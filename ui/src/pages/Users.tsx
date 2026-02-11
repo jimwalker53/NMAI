@@ -314,8 +314,9 @@ export default function Users(): React.ReactElement {
             >
               <MenuItem value="">Select role...</MenuItem>
               <MenuItem value="admin">admin</MenuItem>
-              <MenuItem value="analyst">analyst</MenuItem>
+              <MenuItem value="operator">operator</MenuItem>
               <MenuItem value="viewer">viewer</MenuItem>
+              <MenuItem value="auditor">auditor</MenuItem>
             </TextField>
             <TextField
               label="Enclave (optional)"

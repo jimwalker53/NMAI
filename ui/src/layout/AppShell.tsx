@@ -1,16 +1,20 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
   AppBar,
   Box,
-  Button,
-  Container,
+  Drawer,
   IconButton,
+  List,
+  ListItemButton,
+  ListItemIcon,
+  ListItemText,
   Toolbar,
   Typography,
-  Tab,
-  Tabs,
+  useMediaQuery,
+  useTheme,
 } from '@mui/material'
+import MenuIcon from '@mui/icons-material/Menu'
 import LogoutIcon from '@mui/icons-material/Logout'
 import SecurityIcon from '@mui/icons-material/Security'
 import CableIcon from '@mui/icons-material/Cable'
@@ -19,77 +23,128 @@ import AssessmentIcon from '@mui/icons-material/Assessment'
 import PeopleIcon from '@mui/icons-material/People'
 import { useAuth } from '../auth/AuthContext'
 
+const DRAWER_WIDTH = 220
+
 const NAV_ITEMS = [
-  { label: 'Identities', path: '/identities', icon: <SecurityIcon fontSize="small" /> },
-  { label: 'Connectors', path: '/connectors', icon: <CableIcon fontSize="small" /> },
-  { label: 'Enclaves', path: '/enclaves', icon: <AccountTreeIcon fontSize="small" /> },
-  { label: 'Reports', path: '/reports', icon: <AssessmentIcon fontSize="small" /> },
+  { label: 'Identities', path: '/identities', icon: <SecurityIcon /> },
+  { label: 'Connectors', path: '/connectors', icon: <CableIcon /> },
+  { label: 'Enclaves', path: '/enclaves', icon: <AccountTreeIcon /> },
+  { label: 'Reports', path: '/reports', icon: <AssessmentIcon /> },
 ]
 
-const ADMIN_ITEM = { label: 'Users', path: '/users', icon: <PeopleIcon fontSize="small" /> }
+const ADMIN_ITEM = { label: 'Users', path: '/users', icon: <PeopleIcon /> }
 
 export default function AppShell(): React.ReactElement {
   const { isAdmin, user, logout } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
+  const theme = useTheme()
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'))
+  const [mobileOpen, setMobileOpen] = useState(false)
 
   const items = isAdmin ? [...NAV_ITEMS, ADMIN_ITEM] : NAV_ITEMS
 
-  // Determine which tab is currently active
-  const currentTab = items.findIndex((item) =>
-    location.pathname.startsWith(item.path),
+  const drawerContent = (
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <Toolbar
+        variant="dense"
+        sx={{ justifyContent: 'center', borderBottom: 1, borderColor: 'divider' }}
+      >
+        <Typography
+          variant="h6"
+          sx={{ fontWeight: 700, letterSpacing: '0.05em', color: 'primary.main', cursor: 'pointer' }}
+          onClick={() => { navigate('/'); if (isMobile) setMobileOpen(false) }}
+        >
+          NMIA
+        </Typography>
+      </Toolbar>
+
+      <List sx={{ flex: 1, pt: 1 }}>
+        {items.map((item) => {
+          const active = location.pathname.startsWith(item.path)
+          return (
+            <ListItemButton
+              key={item.path}
+              selected={active}
+              onClick={() => { navigate(item.path); if (isMobile) setMobileOpen(false) }}
+              sx={{
+                mx: 1,
+                borderRadius: 1,
+                mb: 0.5,
+                '&.Mui-selected': {
+                  bgcolor: 'primary.main',
+                  color: '#fff',
+                  '&:hover': { bgcolor: 'primary.dark' },
+                  '& .MuiListItemIcon-root': { color: '#fff' },
+                },
+              }}
+            >
+              <ListItemIcon sx={{ minWidth: 36 }}>{item.icon}</ListItemIcon>
+              <ListItemText
+                primary={item.label}
+                primaryTypographyProps={{ fontSize: '0.875rem', fontWeight: active ? 600 : 400 }}
+              />
+            </ListItemButton>
+          )
+        })}
+      </List>
+    </Box>
   )
 
-  const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
-    navigate(items[newValue].path)
-  }
-
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
-      <AppBar position="sticky" sx={{ bgcolor: 'secondary.main' }}>
-        <Toolbar variant="dense" sx={{ gap: 2 }}>
-          <Typography
-            variant="h6"
-            sx={{ fontWeight: 700, letterSpacing: '0.05em', color: '#4cc9f0', mr: 2, cursor: 'pointer' }}
-            onClick={() => navigate('/')}
-          >
-            NMIA
-          </Typography>
+    <Box sx={{ display: 'flex', minHeight: '100vh' }}>
+      {/* Drawer */}
+      {isMobile ? (
+        <Drawer
+          variant="temporary"
+          open={mobileOpen}
+          onClose={() => setMobileOpen(false)}
+          ModalProps={{ keepMounted: true }}
+          sx={{ '& .MuiDrawer-paper': { width: DRAWER_WIDTH, boxSizing: 'border-box' } }}
+        >
+          {drawerContent}
+        </Drawer>
+      ) : (
+        <Drawer
+          variant="permanent"
+          sx={{
+            width: DRAWER_WIDTH,
+            flexShrink: 0,
+            '& .MuiDrawer-paper': { width: DRAWER_WIDTH, boxSizing: 'border-box' },
+          }}
+        >
+          {drawerContent}
+        </Drawer>
+      )}
 
-          <Tabs
-            value={currentTab >= 0 ? currentTab : false}
-            onChange={handleTabChange}
-            textColor="inherit"
-            TabIndicatorProps={{ sx: { bgcolor: '#4cc9f0' } }}
-            sx={{
-              flexGrow: 1,
-              '& .MuiTab-root': {
-                minHeight: 48,
-                textTransform: 'none',
-                fontSize: '0.875rem',
-                color: '#ccc',
-                '&.Mui-selected': { color: '#fff' },
-              },
-            }}
-          >
-            {items.map((item) => (
-              <Tab key={item.path} icon={item.icon} iconPosition="start" label={item.label} />
-            ))}
-          </Tabs>
+      {/* Main content */}
+      <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <AppBar
+          position="sticky"
+          color="inherit"
+          elevation={0}
+          sx={{ borderBottom: 1, borderColor: 'divider' }}
+        >
+          <Toolbar variant="dense">
+            {isMobile && (
+              <IconButton edge="start" onClick={() => setMobileOpen(true)} sx={{ mr: 1 }}>
+                <MenuIcon />
+              </IconButton>
+            )}
+            <Box sx={{ flex: 1 }} />
+            <Typography variant="body2" color="text.secondary" sx={{ mr: 1 }}>
+              {user?.sub || user?.username || 'User'}
+            </Typography>
+            <IconButton size="small" onClick={logout} color="default">
+              <LogoutIcon fontSize="small" />
+            </IconButton>
+          </Toolbar>
+        </AppBar>
 
-          <Typography variant="body2" sx={{ color: '#aaa', whiteSpace: 'nowrap' }}>
-            {user?.sub || user?.username || 'User'}
-          </Typography>
-
-          <IconButton size="small" onClick={logout} sx={{ color: '#ccc', '&:hover': { color: '#f72585' } }}>
-            <LogoutIcon fontSize="small" />
-          </IconButton>
-        </Toolbar>
-      </AppBar>
-
-      <Container maxWidth="lg" sx={{ py: 3, flex: 1 }}>
-        <Outlet />
-      </Container>
+        <Box component="main" sx={{ flex: 1, p: 3, bgcolor: 'background.default' }}>
+          <Outlet />
+        </Box>
+      </Box>
     </Box>
   )
 }

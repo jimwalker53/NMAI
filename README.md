@@ -127,6 +127,14 @@ make up && make migrate && make bootstrap
 # With sample data
 make up && make migrate && make bootstrap && make seed
 ```
+This runs `python -m nmia.seed` interactively and prompts for:
+
+- **Create SAMPLE lab enclave (Y/n)**
+- **Create SAMPLE systems/owners (Y/n)**
+- **Create SAMPLE identities/findings (svc_acct + cert fake data) (Y/n)**
+
+The seed workflow is idempotent and safe to run multiple times: existing SAMPLE records are detected and reused/skipped.
+All generated sample objects are clearly tagged with `SAMPLE` in names and/or descriptions.
 
 ### Common Commands
 

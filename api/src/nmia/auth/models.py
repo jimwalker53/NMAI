@@ -79,7 +79,7 @@ class UserRoleEnclave(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     role_id = Column(UUID(as_uuid=True), ForeignKey("roles.id", ondelete="CASCADE"), nullable=False)
-    enclave_id = Column(UUID(as_uuid=True), ForeignKey("enclaves.id", ondelete="CASCADE"), nullable=False)
+    enclave_id = Column(UUID(as_uuid=True), ForeignKey("enclaves.id", ondelete="CASCADE"), nullable=True)
     created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
 

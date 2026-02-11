@@ -128,6 +128,19 @@ def health_check() -> dict:
     return {"status": "healthy"}
 
 
+# -- Bootstrap status (unauthenticated) ---------------------------------------
+
+@app.get("/api/v1/bootstrap/status", tags=["bootstrap"])
+def bootstrap_status() -> dict:
+    """Return whether bootstrap is still required (no users exist)."""
+    db = SessionLocal()
+    try:
+        user_count = db.query(User).count()
+        return {"bootstrap_required": user_count == 0}
+    finally:
+        db.close()
+
+
 def run() -> None:
     """Entry point for the ``nmia`` console script."""
     import uvicorn

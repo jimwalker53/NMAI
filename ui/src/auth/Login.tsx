@@ -4,15 +4,17 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
+  Alert,
   Box,
   Button,
   Container,
   Paper,
   TextField,
   Typography,
-  Alert,
 } from '@mui/material'
+import RefreshIcon from '@mui/icons-material/Refresh'
 import { useAuth } from './AuthContext'
+import { useBootstrapStatus } from '../api/client'
 
 const loginSchema = z.object({
   username: z.string().min(1, 'Required'),
@@ -34,6 +36,13 @@ export default function Login(): React.ReactElement {
   const navigate = useNavigate()
   const [error, setError] = useState<string>('')
   const [loading, setLoading] = useState<boolean>(false)
+  const [showLoginAnyway, setShowLoginAnyway] = useState(false)
+
+  const {
+    data: bootstrapData,
+    isError: bootstrapError,
+    refetch: refetchBootstrap,
+  } = useBootstrapStatus(!isAuthenticated)
 
   const {
     register,
@@ -63,6 +72,112 @@ export default function Login(): React.ReactElement {
     }
   }
 
+  const bootstrapRequired = bootstrapData?.bootstrap_required === true
+
+  // ── Bootstrap-required gate ────────────────────────────────────────
+  if (bootstrapRequired && !showLoginAnyway) {
+    return (
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          minHeight: '100vh',
+          bgcolor: 'background.default',
+        }}
+      >
+        <Container maxWidth="sm">
+          <Paper sx={{ p: 4 }} elevation={4}>
+            <Typography variant="h4" align="center" gutterBottom>
+              NMIA
+            </Typography>
+            <Typography variant="body2" align="center" color="text.secondary" sx={{ mb: 3 }}>
+              Non-Human Identity Authority
+            </Typography>
+
+            <Alert severity="warning" sx={{ mb: 3 }}>
+              No admin account exists yet. Run the bootstrap commands below to get started.
+            </Alert>
+
+            <Typography variant="subtitle2" sx={{ mb: 1 }}>
+              1. Run database migrations
+            </Typography>
+            <Box
+              component="pre"
+              sx={{
+                bgcolor: 'grey.900',
+                color: 'grey.100',
+                p: 1.5,
+                borderRadius: 1,
+                fontSize: '0.85rem',
+                fontFamily: 'monospace',
+                overflow: 'auto',
+                mb: 2,
+              }}
+            >
+              make migrate
+            </Box>
+
+            <Typography variant="subtitle2" sx={{ mb: 1 }}>
+              2. Create the admin account (interactive password prompt)
+            </Typography>
+            <Box
+              component="pre"
+              sx={{
+                bgcolor: 'grey.900',
+                color: 'grey.100',
+                p: 1.5,
+                borderRadius: 1,
+                fontSize: '0.85rem',
+                fontFamily: 'monospace',
+                overflow: 'auto',
+                mb: 2,
+              }}
+            >
+              make bootstrap
+            </Box>
+
+            <Typography variant="subtitle2" sx={{ mb: 1 }}>
+              3. (Optional) Seed sample data
+            </Typography>
+            <Box
+              component="pre"
+              sx={{
+                bgcolor: 'grey.900',
+                color: 'grey.100',
+                p: 1.5,
+                borderRadius: 1,
+                fontSize: '0.85rem',
+                fontFamily: 'monospace',
+                overflow: 'auto',
+                mb: 3,
+              }}
+            >
+              make seed
+            </Box>
+
+            <Box sx={{ display: 'flex', gap: 1 }}>
+              <Button
+                variant="contained"
+                startIcon={<RefreshIcon />}
+                onClick={() => refetchBootstrap()}
+              >
+                Refresh
+              </Button>
+              <Button
+                variant="text"
+                onClick={() => setShowLoginAnyway(true)}
+              >
+                Show login anyway
+              </Button>
+            </Box>
+          </Paper>
+        </Container>
+      </Box>
+    )
+  }
+
+  // ── Normal login form ──────────────────────────────────────────────
   return (
     <Box
       sx={{
@@ -86,6 +201,12 @@ export default function Login(): React.ReactElement {
           >
             Non-Human Identity Authority
           </Typography>
+
+          {bootstrapError && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              Could not check bootstrap status.
+            </Alert>
+          )}
 
           {error && (
             <Alert severity="error" sx={{ mb: 2 }}>

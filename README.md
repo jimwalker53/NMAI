@@ -98,16 +98,14 @@ For development and testing, you can populate the database with clearly-marked f
 make seed
 ```
 
-This runs `python -m nmia.seed` interactively and asks before creating each category:
+This runs `python -m nmia.seed` interactively and prompts for:
 
-- **Lab enclave** — a sample enclave for experimentation
-- **Sample connectors** — AD LDAP and ADCS File connectors with example configs
-- **Sample identities** — service accounts and certificates with varying risk profiles:
-  - Expiring and expired certs (for Reports dashboard)
-  - Identities with and without owners (for orphaned report)
-  - Pre-computed risk scores
+- **Create SAMPLE lab enclave (Y/n)**
+- **Create SAMPLE systems/owners (Y/n)**
+- **Create SAMPLE identities/findings (svc_acct + cert fake data) (Y/n)**
 
-All seed data is clearly prefixed/marked as sample data.
+The seed workflow is idempotent and safe to run multiple times: existing SAMPLE records are detected and reused/skipped.
+All generated sample objects are clearly tagged with `SAMPLE` in names and/or descriptions.
 
 ### Common Commands
 

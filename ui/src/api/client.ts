@@ -1,5 +1,6 @@
 import axios, { AxiosResponse, InternalAxiosRequestConfig } from 'axios'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { handleBootstrapRequired } from '../auth/bootstrapGate'
 
 // ── API Base URL ─────────────────────────────────────────────────────
 // When VITE_API_BASE_URL is set (e.g. "https://nmia-api.example.com"),
@@ -122,6 +123,20 @@ export interface BootstrapStatus {
   bootstrap_required: boolean
 }
 
+export interface ApiMeta {
+  service: string
+  version: string
+  build: string
+  time: string
+}
+
+export interface CollectorInfo {
+  id: string
+  name?: string
+  version?: string
+  last_seen?: string
+}
+
 // ── Axios client ─────────────────────────────────────────────────────
 
 const client = axios.create({
@@ -138,10 +153,37 @@ client.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   return config
 })
 
-// ── Response interceptor: redirect on 401 ───────────────────────────
+// ── Response interceptor: handle 401 + bootstrap_required ───────────
+
+function isBootstrapRequiredBody(data: unknown): boolean {
+  if (data && typeof data === 'object' && 'error' in data) {
+    return (data as Record<string, unknown>).error === 'bootstrap_required'
+  }
+  return false
+}
+
+function isBootstrapStatusUrl(url: string | undefined): boolean {
+  return !!url && url.includes('/bootstrap/status')
+}
+
 client.interceptors.response.use(
-  (res) => res,
+  (res) => {
+    // Successful responses can also carry bootstrap_required (e.g. 200 from a proxy)
+    if (!isBootstrapStatusUrl(res.config.url) && isBootstrapRequiredBody(res.data)) {
+      handleBootstrapRequired()
+    }
+    return res
+  },
   (err) => {
+    const url = err.config?.url as string | undefined
+
+    // Detect bootstrap_required in error responses (e.g. 503)
+    if (!isBootstrapStatusUrl(url) && err.response?.data && isBootstrapRequiredBody(err.response.data)) {
+      handleBootstrapRequired()
+      return Promise.reject(err)
+    }
+
+    // Standard 401 handling
     if (err.response && err.response.status === 401) {
       localStorage.removeItem('nmia_token')
       if (window.location.pathname !== '/login') {
@@ -177,6 +219,14 @@ export function login(username: string, password: string): Promise<AxiosResponse
 // ── Bootstrap ───────────────────────────────────────────────────────
 export function getBootstrapStatus(): Promise<AxiosResponse<BootstrapStatus>> {
   return client.get('/api/v1/bootstrap/status')
+}
+
+// ── Meta / Collectors ────────────────────────────────────────────────
+export function getApiMeta(): Promise<AxiosResponse<ApiMeta>> {
+  return client.get('/api/v1/meta')
+}
+export function getCollectors(): Promise<AxiosResponse<CollectorInfo[]>> {
+  return client.get('/api/v1/collectors')
 }
 
 // ── Enclaves ─────────────────────────────────────────────────────────
@@ -292,6 +342,8 @@ export function getOrphanedReport(): Promise<AxiosResponse<Identity[] | Paginate
 
 export const queryKeys = {
   bootstrapStatus: ['bootstrapStatus'] as const,
+  apiMeta: ['apiMeta'] as const,
+  collectors: ['collectors'] as const,
   enclaves: ['enclaves'] as const,
   users: ['users'] as const,
   connectorTypes: ['connectorTypes'] as const,
@@ -314,6 +366,24 @@ export function useBootstrapStatus(enabled: boolean) {
     queryFn: () => getBootstrapStatus().then((r) => r.data),
     enabled,
     retry: false,
+  })
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ── React Query Hooks – Meta / Collectors ───────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+
+export function useApiMeta() {
+  return useQuery({
+    queryKey: queryKeys.apiMeta,
+    queryFn: () => getApiMeta().then((r) => r.data),
+  })
+}
+
+export function useCollectors() {
+  return useQuery({
+    queryKey: queryKeys.collectors,
+    queryFn: () => getCollectors().then((r) => r.data),
   })
 }
 

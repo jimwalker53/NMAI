@@ -21,6 +21,7 @@ import CableIcon from '@mui/icons-material/Cable'
 import AccountTreeIcon from '@mui/icons-material/AccountTree'
 import AssessmentIcon from '@mui/icons-material/Assessment'
 import PeopleIcon from '@mui/icons-material/People'
+import SettingsIcon from '@mui/icons-material/Settings'
 import { useAuth } from '../auth/AuthContext'
 
 const DRAWER_WIDTH = 220
@@ -32,7 +33,10 @@ const NAV_ITEMS = [
   { label: 'Reports', path: '/reports', icon: <AssessmentIcon /> },
 ]
 
-const ADMIN_ITEM = { label: 'Users', path: '/users', icon: <PeopleIcon /> }
+const ADMIN_ITEMS = [
+  { label: 'Users', path: '/users', icon: <PeopleIcon /> },
+  { label: 'Settings', path: '/settings', icon: <SettingsIcon /> },
+]
 
 export default function AppShell(): React.ReactElement {
   const { isAdmin, user, logout } = useAuth()
@@ -42,7 +46,7 @@ export default function AppShell(): React.ReactElement {
   const isMobile = useMediaQuery(theme.breakpoints.down('md'))
   const [mobileOpen, setMobileOpen] = useState(false)
 
-  const items = isAdmin ? [...NAV_ITEMS, ADMIN_ITEM] : NAV_ITEMS
+  const items = isAdmin ? [...NAV_ITEMS, ...ADMIN_ITEMS] : NAV_ITEMS
 
   const drawerContent = (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>

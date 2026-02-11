@@ -15,6 +15,7 @@ import {
 import RefreshIcon from '@mui/icons-material/Refresh'
 import { useAuth } from './AuthContext'
 import { useBootstrapStatus } from '../api/client'
+import { isBootstrapFlagged, clearBootstrapFlag } from './bootstrapGate'
 
 const loginSchema = z.object({
   username: z.string().min(1, 'Required'),
@@ -61,6 +62,7 @@ export default function Login(): React.ReactElement {
     setError('')
     setLoading(true)
     try {
+      clearBootstrapFlag()
       await login(values.username, values.password)
       navigate('/identities', { replace: true })
     } catch (err: unknown) {
@@ -72,7 +74,9 @@ export default function Login(): React.ReactElement {
     }
   }
 
-  const bootstrapRequired = bootstrapData?.bootstrap_required === true
+  // Show bootstrap card if API says so OR if the interceptor flagged it
+  const bootstrapRequired =
+    bootstrapData?.bootstrap_required === true || isBootstrapFlagged()
 
   // ── Bootstrap-required gate ────────────────────────────────────────
   if (bootstrapRequired && !showLoginAnyway) {
@@ -166,7 +170,7 @@ export default function Login(): React.ReactElement {
               </Button>
               <Button
                 variant="text"
-                onClick={() => setShowLoginAnyway(true)}
+                onClick={() => { clearBootstrapFlag(); setShowLoginAnyway(true) }}
               >
                 Show login anyway
               </Button>

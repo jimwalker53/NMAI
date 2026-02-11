@@ -12,86 +12,23 @@ import Identities from './pages/Identities'
 import IdentityDetail from './pages/IdentityDetail'
 import Reports from './pages/Reports'
 
-function AppRoutes(): React.ReactElement {
-  return (
-    <Routes>
-      <Route path="/login" element={<Login />} />
-      <Route
-        path="/"
-        element={
-          <RequireAuth>
-            <Navigate to="/identities" replace />
-          </RequireAuth>
-        }
-      />
-      <Route
-        path="/identities"
-        element={
-          <RequireAuth>
-            <Identities />
-          </RequireAuth>
-        }
-      />
-      <Route
-        path="/identities/:id"
-        element={
-          <RequireAuth>
-            <IdentityDetail />
-          </RequireAuth>
-        }
-      />
-      <Route
-        path="/connectors"
-        element={
-          <RequireAuth>
-            <Connectors />
-          </RequireAuth>
-        }
-      />
-      <Route
-        path="/connectors/:id"
-        element={
-          <RequireAuth>
-            <ConnectorDetail />
-          </RequireAuth>
-        }
-      />
-      <Route
-        path="/enclaves"
-        element={
-          <RequireAuth>
-            <Enclaves />
-          </RequireAuth>
-        }
-      />
-      <Route
-        path="/reports"
-        element={
-          <RequireAuth>
-            <Reports />
-          </RequireAuth>
-        }
-      />
-      <Route
-        path="/users"
-        element={
-          <RequireAuth requireAdmin>
-            <Users />
-          </RequireAuth>
-        }
-      />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
-  )
-}
-
 export default function App(): React.ReactElement {
   return (
     <AuthProvider>
-      <AppShell />
-      <main className="main-content">
-        <AppRoutes />
-      </main>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route element={<RequireAuth><AppShell /></RequireAuth>}>
+          <Route index element={<Navigate to="/identities" replace />} />
+          <Route path="identities" element={<Identities />} />
+          <Route path="identities/:id" element={<IdentityDetail />} />
+          <Route path="connectors" element={<Connectors />} />
+          <Route path="connectors/:id" element={<ConnectorDetail />} />
+          <Route path="enclaves" element={<Enclaves />} />
+          <Route path="reports" element={<Reports />} />
+          <Route path="users" element={<Users />} />
+        </Route>
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
     </AuthProvider>
   )
 }

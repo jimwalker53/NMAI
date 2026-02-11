@@ -42,6 +42,8 @@ Prerequisites: Docker, Docker Compose, Make
 git clone <repo-url>
 cd nmia
 make up
+make migrate
+make bootstrap
 ```
 
 | Service    | URL                       |
@@ -51,7 +53,61 @@ make up
 | API Docs   | http://localhost:8000/docs |
 | Collector  | http://localhost:9000      |
 
-**Default login**: admin / admin
+> **There are no default passwords.** You must run `make bootstrap` to create the initial admin account interactively.
+
+### First-Run Bootstrap
+
+The `make bootstrap` command (or `python -m nmia.bootstrap` inside the API container) performs interactive first-run setup:
+
+```
+$ make bootstrap
+
+============================================================
+  NMIA — Non-Human Identity Authority
+  First-Run Bootstrap
+============================================================
+
+[1/5] Creating RBAC roles ...        ✓ admin, operator, viewer, auditor
+[2/5] Creating connector types ...   ✓ ad_ldap, adcs_file, adcs_remote
+[3/5] Creating default enclave ...   ✓ Default
+[4/5] Setting up GlobalAdmin account ...
+
+  Admin username [admin]: myadmin
+  Admin password: ********
+  Confirm password: ********
+
+[5/5] Creating admin user ...        ✓
+
+============================================================
+  Bootstrap complete!
+  Username: myadmin
+  Login at: http://localhost:5173
+============================================================
+```
+
+- Prompts for admin username (defaults to `admin`)
+- Prompts for password with hidden input — **no default password is set**
+- Password must be at least 8 characters and confirmed
+- Refuses to run if users already exist (bootstrap is a one-time operation)
+
+### Optional: Seed Sample Data
+
+For development and testing, you can populate the database with clearly-marked fake data:
+
+```bash
+make seed
+```
+
+This runs `python -m nmia.seed` interactively and asks before creating each category:
+
+- **Lab enclave** — a sample enclave for experimentation
+- **Sample connectors** — AD LDAP and ADCS File connectors with example configs
+- **Sample identities** — service accounts and certificates with varying risk profiles:
+  - Expiring and expired certs (for Reports dashboard)
+  - Identities with and without owners (for orphaned report)
+  - Pre-computed risk scores
+
+All seed data is clearly prefixed/marked as sample data.
 
 ### Common Commands
 
@@ -60,10 +116,24 @@ make up          # Start all services
 make down        # Stop all services
 make logs        # Tail logs
 make migrate     # Run database migrations
+make bootstrap   # Interactive first-run setup (creates admin account)
+make seed        # Interactive sample data population
 make test        # Run API tests
 make clean       # Stop + remove volumes
 make restart     # Full restart
 ```
+
+## Tech Stack
+
+| Layer     | Technology                                          |
+|-----------|-----------------------------------------------------|
+| UI        | React + Vite + TypeScript + MUI (Material UI)       |
+| API calls | TanStack React Query                                |
+| Forms     | react-hook-form + zod                               |
+| Backend   | FastAPI + SQLAlchemy + Alembic + PostgreSQL          |
+| Worker    | Python + APScheduler                                |
+| Collector | Python FastAPI (Windows service)                    |
+| Dev env   | Docker Compose                                      |
 
 ## Configuring Connectors
 
@@ -146,13 +216,15 @@ The collector runs certutil, fetches cert blobs for SAN extraction, and pushes r
 
 ## Security Notes
 
+- **No default passwords** — admin account is created interactively via `make bootstrap`
 - JWT authentication with bcrypt password hashing
 - Four RBAC roles: admin, operator, viewer, auditor
 - Enclave-scoped access on every endpoint
-- Connector credentials in DB config (encrypt at rest in production — TODO)
+- Connector credentials stored in DB config JSON (encrypt at rest in production — TODO)
 - Audit logging for administrative actions
 - No hardcoded connector instances — all configuration via UI
-- Change SECRET_KEY in production
+- Change `SECRET_KEY` in production
+- CORS configured for UI origin only
 
 ## Project Structure
 
@@ -167,16 +239,19 @@ nmia/
 │   │   ├── connectors/    # Connector CRUD, scheduling, jobs
 │   │   ├── ingestion/     # Ingest, normalize, correlate, risk
 │   │   ├── reports/       # Expiring/orphaned reports
-│   │   └── util/          # Cron, hashing, logging utilities
+│   │   ├── util/          # Cron, hashing, logging utilities
+│   │   ├── bootstrap.py   # Interactive first-run setup CLI
+│   │   └── seed.py        # Sample data population CLI
 │   └── tests/
 ├── worker/                 # Background job scheduler
 │   └── src/nmia_worker/
 │       ├── connectors/    # AD and ADCS collectors
 │       └── pipeline/      # Normalize, correlate, risk
-├── ui/                     # React + TypeScript frontend
+├── ui/                     # React + Vite + TypeScript + MUI
 │   └── src/
 │       ├── auth/          # Login, auth context
 │       ├── layout/        # App shell, navigation
+│       ├── api/           # Axios client + TanStack Query hooks
 │       └── pages/         # All pages
 ├── collector-windows/      # Windows ADCS collector
 │   └── src/nmia_collector/

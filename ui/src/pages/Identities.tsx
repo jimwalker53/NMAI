@@ -1,217 +1,237 @@
-import React, { useState, useEffect, useCallback, KeyboardEvent } from 'react'
+import React, { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import * as api from '../api/client'
-
-function riskClass(score: number | null | undefined): string {
-  if (score == null) return ''
-  if (score >= 70) return 'risk-high'
-  if (score >= 40) return 'risk-medium'
-  return 'risk-low'
-}
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  Chip,
+  CircularProgress,
+  MenuItem,
+  Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TablePagination,
+  TableRow,
+  TextField,
+  Typography,
+} from '@mui/material'
+import FilterListIcon from '@mui/icons-material/FilterList'
+import {
+  IdentityQueryParams,
+  useIdentities,
+  useEnclaves,
+} from '../api/client'
 
 const PAGE_SIZE = 25
 
+function riskChipColor(score: number | null | undefined): 'error' | 'warning' | 'success' | 'default' {
+  if (score == null) return 'default'
+  if (score >= 70) return 'error'
+  if (score >= 40) return 'warning'
+  return 'success'
+}
+
 export default function Identities(): React.ReactElement {
   const navigate = useNavigate()
-  const [identities, setIdentities] = useState<api.Identity[]>([])
-  const [enclaves, setEnclaves] = useState<api.Enclave[]>([])
-  const [total, setTotal] = useState<number>(0)
-  const [loading, setLoading] = useState<boolean>(true)
-  const [error, setError] = useState<string>('')
+  const { data: enclaves = [] } = useEnclaves()
 
-  // Filters
-  const [enclaveFilter, setEnclaveFilter] = useState<string>('')
-  const [typeFilter, setTypeFilter] = useState<string>('')
-  const [search, setSearch] = useState<string>('')
-  const [riskMin, setRiskMin] = useState<string>('')
-  const [riskMax, setRiskMax] = useState<string>('')
-  const [offset, setOffset] = useState<number>(0)
+  // Filter state
+  const [enclaveFilter, setEnclaveFilter] = useState('')
+  const [typeFilter, setTypeFilter] = useState('')
+  const [search, setSearch] = useState('')
+  const [riskMin, setRiskMin] = useState('')
+  const [riskMax, setRiskMax] = useState('')
+  const [page, setPage] = useState(0)
 
-  const fetchIdentities = useCallback(async (): Promise<void> => {
-    setLoading(true)
-    setError('')
-    try {
-      const params: api.IdentityQueryParams = { limit: PAGE_SIZE, offset }
-      if (enclaveFilter) params.enclave_id = enclaveFilter
-      if (typeFilter) params.type = typeFilter
-      if (search) params.search = search
-      if (riskMin !== '') params.risk_score_min = Number(riskMin)
-      if (riskMax !== '') params.risk_score_max = Number(riskMax)
-      const res = await api.getIdentities(params)
-      if (Array.isArray(res.data)) {
-        setIdentities(res.data)
-        setTotal(res.data.length)
-      } else {
-        const paginated = res.data as api.PaginatedResponse<api.Identity>
-        setIdentities(paginated.items || [])
-        setTotal(paginated.total ?? paginated.items?.length ?? 0)
-      }
-    } catch {
-      setError('Failed to load identities.')
-    } finally {
-      setLoading(false)
-    }
-  }, [enclaveFilter, typeFilter, search, riskMin, riskMax, offset])
+  // Applied filters (only update when user clicks Filter or changes page)
+  const [appliedFilters, setAppliedFilters] = useState<IdentityQueryParams>({
+    limit: PAGE_SIZE,
+    offset: 0,
+  })
 
-  useEffect(() => {
-    api.getEnclaves().then((res) => {
-      setEnclaves(Array.isArray(res.data) ? res.data : (res.data as api.PaginatedResponse<api.Enclave>).items || [])
-    }).catch(() => {})
-  }, [])
+  const params: IdentityQueryParams = useMemo(() => appliedFilters, [appliedFilters])
 
-  useEffect(() => { fetchIdentities() }, [fetchIdentities])
+  const { data, isLoading, error: queryError } = useIdentities(params)
+  const identities = data?.items ?? []
+  const total = data?.total ?? 0
 
-  const handleFilterApply = (): void => {
-    setOffset(0)
-    fetchIdentities()
+  const handleApplyFilters = () => {
+    const newParams: IdentityQueryParams = { limit: PAGE_SIZE, offset: 0 }
+    if (enclaveFilter) newParams.enclave_id = enclaveFilter
+    if (typeFilter) newParams.type = typeFilter
+    if (search) newParams.search = search
+    if (riskMin !== '') newParams.risk_score_min = Number(riskMin)
+    if (riskMax !== '') newParams.risk_score_max = Number(riskMax)
+    setPage(0)
+    setAppliedFilters(newParams)
   }
 
-  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>): void => {
-    if (e.key === 'Enter') handleFilterApply()
+  const handlePageChange = (_event: unknown, newPage: number) => {
+    setPage(newPage)
+    setAppliedFilters((prev) => ({ ...prev, offset: newPage * PAGE_SIZE }))
   }
 
-  const hasNext = identities.length === PAGE_SIZE
-  const hasPrev = offset > 0
-  const page = Math.floor(offset / PAGE_SIZE) + 1
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') handleApplyFilters()
+  }
 
   return (
-    <div>
-      <div className="card">
-        <div className="card-header">
-          <h2>Identities</h2>
-          <span style={{ color: '#666', fontSize: '0.85rem' }}>{total} total</span>
-        </div>
+    <Card>
+      <CardHeader
+        title="Identities"
+        subheader={`${total} total`}
+      />
+      <CardContent>
+        {/* Filter Bar */}
+        <Stack direction="row" spacing={1.5} sx={{ mb: 2 }} flexWrap="wrap" useFlexGap alignItems="flex-end">
+          <TextField
+            label="Enclave"
+            select
+            value={enclaveFilter}
+            onChange={(e) => setEnclaveFilter(e.target.value)}
+            sx={{ minWidth: 150 }}
+          >
+            <MenuItem value="">All</MenuItem>
+            {enclaves.map((enc) => (
+              <MenuItem key={enc.id} value={enc.id}>
+                {enc.name}
+              </MenuItem>
+            ))}
+          </TextField>
 
-        {/* Filter bar */}
-        <div className="filter-bar">
-          <div className="form-group">
-            <label>Enclave</label>
-            <select value={enclaveFilter} onChange={(e) => setEnclaveFilter(e.target.value)}>
-              <option value="">All</option>
-              {enclaves.map((enc) => (
-                <option key={enc.id} value={enc.id}>{enc.name}</option>
-              ))}
-            </select>
-          </div>
-          <div className="form-group">
-            <label>Type</label>
-            <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
-              <option value="">All</option>
-              <option value="svc_acct">Service Account</option>
-              <option value="cert">Certificate</option>
-              <option value="api_key">API Key</option>
-              <option value="bot">Bot</option>
-            </select>
-          </div>
-          <div className="form-group">
-            <label>Search</label>
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Name, owner..."
-            />
-          </div>
-          <div className="form-group">
-            <label>Risk Min</label>
-            <input
-              type="number"
-              value={riskMin}
-              onChange={(e) => setRiskMin(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="0"
-              min="0"
-              max="100"
-              style={{ width: '80px' }}
-            />
-          </div>
-          <div className="form-group">
-            <label>Risk Max</label>
-            <input
-              type="number"
-              value={riskMax}
-              onChange={(e) => setRiskMax(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="100"
-              min="0"
-              max="100"
-              style={{ width: '80px' }}
-            />
-          </div>
-          <div className="form-group" style={{ display: 'flex', alignItems: 'flex-end' }}>
-            <button className="btn btn-primary btn-sm" onClick={handleFilterApply}>Filter</button>
-          </div>
-        </div>
+          <TextField
+            label="Type"
+            select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+            sx={{ minWidth: 150 }}
+          >
+            <MenuItem value="">All</MenuItem>
+            <MenuItem value="svc_acct">Service Account</MenuItem>
+            <MenuItem value="cert">Certificate</MenuItem>
+            <MenuItem value="api_key">API Key</MenuItem>
+            <MenuItem value="bot">Bot</MenuItem>
+          </TextField>
 
-        {error && <div className="error-msg">{error}</div>}
+          <TextField
+            label="Search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Name, owner..."
+            sx={{ minWidth: 180 }}
+          />
 
-        {loading ? (
-          <div className="loading">Loading identities...</div>
+          <TextField
+            label="Risk Min"
+            type="number"
+            value={riskMin}
+            onChange={(e) => setRiskMin(e.target.value)}
+            onKeyDown={handleKeyDown}
+            inputProps={{ min: 0, max: 100 }}
+            sx={{ width: 100 }}
+          />
+
+          <TextField
+            label="Risk Max"
+            type="number"
+            value={riskMax}
+            onChange={(e) => setRiskMax(e.target.value)}
+            onKeyDown={handleKeyDown}
+            inputProps={{ min: 0, max: 100 }}
+            sx={{ width: 100 }}
+          />
+
+          <Button variant="contained" startIcon={<FilterListIcon />} onClick={handleApplyFilters}>
+            Filter
+          </Button>
+        </Stack>
+
+        {queryError && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            Failed to load identities.
+          </Alert>
+        )}
+
+        {isLoading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+            <CircularProgress />
+          </Box>
         ) : (
           <>
-            <table>
-              <thead>
-                <tr>
-                  <th>Display Name</th>
-                  <th>Type</th>
-                  <th>Enclave</th>
-                  <th>Owner</th>
-                  <th>Linked System</th>
-                  <th>Risk Score</th>
-                  <th>Last Seen</th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Display Name</TableCell>
+                  <TableCell>Type</TableCell>
+                  <TableCell>Enclave</TableCell>
+                  <TableCell>Owner</TableCell>
+                  <TableCell>Linked System</TableCell>
+                  <TableCell>Risk Score</TableCell>
+                  <TableCell>Last Seen</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
                 {identities.length === 0 ? (
-                  <tr><td colSpan={7} style={{ textAlign: 'center', color: '#999' }}>No identities found.</td></tr>
+                  <TableRow>
+                    <TableCell colSpan={7} align="center">
+                      <Typography color="text.secondary" variant="body2">
+                        No identities found.
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
                 ) : (
                   identities.map((ident) => {
                     const nd = ident.normalized_data as Record<string, unknown> | undefined
                     return (
-                      <tr
+                      <TableRow
                         key={ident.id}
-                        className="clickable"
+                        hover
+                        sx={{ cursor: 'pointer' }}
                         onClick={() => navigate(`/identities/${ident.id}`)}
                       >
-                        <td><strong>{ident.display_name || (nd?.display_name as string) || '--'}</strong></td>
-                        <td>{ident.type || ident.identity_type || '--'}</td>
-                        <td>{ident.enclave_name || ident.enclave_id || '--'}</td>
-                        <td>{ident.owner || (nd?.owner as string) || '--'}</td>
-                        <td>{ident.linked_system || (nd?.linked_system as string) || '--'}</td>
-                        <td>
-                          <span className={riskClass(ident.risk_score)}>
-                            {ident.risk_score != null ? ident.risk_score : '--'}
-                          </span>
-                        </td>
-                        <td>{ident.last_seen ? new Date(ident.last_seen).toLocaleDateString() : '--'}</td>
-                      </tr>
+                        <TableCell>
+                          <Typography fontWeight={600}>
+                            {ident.display_name || (nd?.display_name as string) || '--'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>{ident.type || ident.identity_type || '--'}</TableCell>
+                        <TableCell>{ident.enclave_name || ident.enclave_id || '--'}</TableCell>
+                        <TableCell>{ident.owner || (nd?.owner as string) || '--'}</TableCell>
+                        <TableCell>{ident.linked_system || (nd?.linked_system as string) || '--'}</TableCell>
+                        <TableCell>
+                          <Chip
+                            label={ident.risk_score != null ? ident.risk_score : '--'}
+                            color={riskChipColor(ident.risk_score)}
+                            variant="filled"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          {ident.last_seen ? new Date(ident.last_seen).toLocaleDateString() : '--'}
+                        </TableCell>
+                      </TableRow>
                     )
                   })
                 )}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
 
-            <div className="pagination">
-              <button
-                className="btn btn-secondary btn-sm"
-                onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-                disabled={!hasPrev}
-              >
-                Previous
-              </button>
-              <span>Page {page}</span>
-              <button
-                className="btn btn-secondary btn-sm"
-                onClick={() => setOffset(offset + PAGE_SIZE)}
-                disabled={!hasNext}
-              >
-                Next
-              </button>
-            </div>
+            <TablePagination
+              component="div"
+              count={total}
+              page={page}
+              onPageChange={handlePageChange}
+              rowsPerPage={PAGE_SIZE}
+              rowsPerPageOptions={[PAGE_SIZE]}
+            />
           </>
         )}
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   )
 }

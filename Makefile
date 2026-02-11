@@ -1,4 +1,4 @@
-.PHONY: up down logs api ui worker db collector migrate migration test shell psql clean restart
+.PHONY: up down logs api ui worker db collector migrate bootstrap seed test shell psql clean restart
 
 up:
 	docker compose up -d --build
@@ -29,6 +29,12 @@ migrate:
 
 migration:
 	docker compose exec api alembic revision --autogenerate -m "$(msg)"
+
+bootstrap:
+	docker compose exec -it api python -m nmia.bootstrap
+
+seed:
+	docker compose exec -it api python -m nmia.seed
 
 test:
 	docker compose exec api pytest tests/ -v

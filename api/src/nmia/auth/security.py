@@ -1,17 +1,21 @@
 """Password hashing and JWT token utilities."""
 
 from datetime import datetime, timedelta, timezone
+from importlib.util import find_spec
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from nmia.settings import settings
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+_has_argon2 = find_spec("argon2") is not None
+_hash_schemes = ["argon2", "bcrypt"] if _has_argon2 else ["bcrypt"]
+
+pwd_context = CryptContext(schemes=_hash_schemes, deprecated="auto")
 
 
 def hash_password(plain: str) -> str:
-    """Return the bcrypt hash of *plain*."""
+    """Return the hash of *plain* (argon2 preferred, bcrypt fallback)."""
     return pwd_context.hash(plain)
 
 

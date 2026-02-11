@@ -175,15 +175,29 @@ npm install
 npm run dev
 ```
 
-The Vite dev server starts at http://localhost:5173. By default it proxies `/api` requests to the API container at `http://localhost:8000`. Make sure the API is running (`make api` or `make up`).
+The Vite dev server starts at http://localhost:5173. By default it proxies `/api` requests to the API container at `http://localhost:8000` (configured in `vite.config.ts`). Make sure the API is running (`make api` or `make up`).
 
-To point at a different API host, set the `VITE_API_BASE_URL` environment variable:
+### `VITE_API_BASE_URL`
+
+All API calls go through a configurable base URL controlled by the `VITE_API_BASE_URL` environment variable:
+
+| Value | Behaviour |
+|-------|-----------|
+| **Unset / empty** (default) | Requests use relative paths (`/api/v1/...`) — works with the Vite dev proxy or any reverse proxy that routes `/api` to the backend. |
+| **Set to an absolute URL** | Requests are prefixed with the URL (e.g. `https://nmia-api.example.com/api/v1/...`). Use this for production builds or when the API lives on a different host. |
 
 ```bash
-VITE_API_BASE_URL=http://192.168.1.50:8000 npm run dev
+# Local dev (proxy mode, default)
+npm run dev
+
+# Point at a remote API
+VITE_API_BASE_URL=https://nmia-api.example.com npm run dev
+
+# Production build with baked-in API URL
+VITE_API_BASE_URL=https://nmia-api.example.com npm run build
 ```
 
-Build for production:
+Build output:
 
 ```bash
 cd ui

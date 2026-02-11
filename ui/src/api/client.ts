@@ -1,6 +1,19 @@
 import axios, { AxiosResponse, InternalAxiosRequestConfig } from 'axios'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 
+// ── API Base URL ─────────────────────────────────────────────────────
+// When VITE_API_BASE_URL is set (e.g. "https://nmia-api.example.com"),
+// all API calls are prefixed with it.  When unset / empty, requests use
+// relative paths so they go through the Vite dev proxy.
+
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '')
+
+/** Join the configurable base URL with an API path. */
+export function apiUrl(path: string): string {
+  const normalised = path.startsWith('/') ? path : `/${path}`
+  return `${API_BASE_URL}${normalised}`
+}
+
 // ── Shared interfaces for API responses ──────────────────────────────
 
 export interface LoginResponse {
@@ -105,10 +118,14 @@ export interface UploadResult {
   records_ingested?: number
 }
 
+export interface BootstrapStatus {
+  bootstrap_required: boolean
+}
+
 // ── Axios client ─────────────────────────────────────────────────────
 
 const client = axios.create({
-  baseURL: '',
+  baseURL: API_BASE_URL,
   headers: { 'Content-Type': 'application/json' },
 })
 
@@ -155,6 +172,11 @@ export function login(username: string, password: string): Promise<AxiosResponse
   return client.post('/api/v1/auth/login', params, {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
   })
+}
+
+// ── Bootstrap ───────────────────────────────────────────────────────
+export function getBootstrapStatus(): Promise<AxiosResponse<BootstrapStatus>> {
+  return client.get('/api/v1/bootstrap/status')
 }
 
 // ── Enclaves ─────────────────────────────────────────────────────────
@@ -269,6 +291,7 @@ export function getOrphanedReport(): Promise<AxiosResponse<Identity[] | Paginate
 // ══════════════════════════════════════════════════════════════════════
 
 export const queryKeys = {
+  bootstrapStatus: ['bootstrapStatus'] as const,
   enclaves: ['enclaves'] as const,
   users: ['users'] as const,
   connectorTypes: ['connectorTypes'] as const,
@@ -279,6 +302,19 @@ export const queryKeys = {
   identity: (id: string) => ['identity', id] as const,
   expiringReport: (days: number) => ['expiringReport', days] as const,
   orphanedReport: ['orphanedReport'] as const,
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ── React Query Hooks – Bootstrap ───────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+
+export function useBootstrapStatus(enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.bootstrapStatus,
+    queryFn: () => getBootstrapStatus().then((r) => r.data),
+    enabled,
+    retry: false,
+  })
 }
 
 // ══════════════════════════════════════════════════════════════════════

@@ -1,261 +1,360 @@
-import React, { useState, useEffect, FormEvent } from 'react'
-import * as api from '../api/client'
+import React, { useState } from 'react'
+import { useForm, Controller } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  Chip,
+  CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  MenuItem,
+  Snackbar,
+  Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
+  TextField,
+  Typography,
+} from '@mui/material'
+import AddIcon from '@mui/icons-material/Add'
+import DeleteIcon from '@mui/icons-material/Delete'
+import {
+  useUsers,
+  useCreateUser,
+  useDeleteUser,
+  useAssignRole,
+  useRemoveRole,
+  useEnclaves,
+} from '../api/client'
 
-interface UserForm {
-  username: string
-  password: string
-  email: string
-}
+// ── Schemas ──────────────────────────────────────────────────────────
 
-interface RoleForm {
-  userId: string | null
-  role_name: string
-  enclave_id: string
-}
+const createUserSchema = z.object({
+  username: z.string().min(1, 'Required'),
+  password: z.string().min(6, 'Min 6 chars'),
+  email: z.string().email('Invalid email').optional().or(z.literal('')),
+})
 
-interface AxiosErrorResponse {
-  response?: {
-    data?: {
-      detail?: string
-    }
-  }
-}
+type CreateUserFormValues = z.infer<typeof createUserSchema>
+
+const assignRoleSchema = z.object({
+  role_name: z.string().min(1, 'Select a role'),
+  enclave_id: z.string().optional(),
+})
+
+type AssignRoleFormValues = z.infer<typeof assignRoleSchema>
+
+// ── Component ────────────────────────────────────────────────────────
 
 export default function Users(): React.ReactElement {
-  const [users, setUsers] = useState<api.User[]>([])
-  const [enclaves, setEnclaves] = useState<api.Enclave[]>([])
-  const [loading, setLoading] = useState<boolean>(true)
-  const [error, setError] = useState<string>('')
-  const [success, setSuccess] = useState<string>('')
-  const [showCreateUser, setShowCreateUser] = useState<boolean>(false)
-  const [userForm, setUserForm] = useState<UserForm>({ username: '', password: '', email: '' })
-  const [roleForm, setRoleForm] = useState<RoleForm>({ userId: null, role_name: '', enclave_id: '' })
+  const { data: users = [], isLoading, error: queryError } = useUsers()
+  const { data: enclaves = [] } = useEnclaves()
+  const createUserMut = useCreateUser()
+  const deleteUserMut = useDeleteUser()
+  const assignRoleMut = useAssignRole()
+  const removeRoleMut = useRemoveRole()
 
-  const fetchData = async (): Promise<void> => {
-    setLoading(true)
-    try {
-      const [usersRes, enclavesRes] = await Promise.all([api.getUsers(), api.getEnclaves()])
-      setUsers(Array.isArray(usersRes.data) ? usersRes.data : (usersRes.data as api.PaginatedResponse<api.User>).items || [])
-      setEnclaves(Array.isArray(enclavesRes.data) ? enclavesRes.data : (enclavesRes.data as api.PaginatedResponse<api.Enclave>).items || [])
-    } catch {
-      setError('Failed to load data.')
-    } finally {
-      setLoading(false)
-    }
+  const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [roleDialogUserId, setRoleDialogUserId] = useState<string | null>(null)
+  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
+    open: false,
+    message: '',
+    severity: 'success',
+  })
+
+  // Create user form
+  const {
+    register: regCreate,
+    handleSubmit: handleCreateSubmit,
+    reset: resetCreate,
+    formState: { errors: createErrors },
+  } = useForm<CreateUserFormValues>({
+    resolver: zodResolver(createUserSchema),
+    defaultValues: { username: '', password: '', email: '' },
+  })
+
+  // Assign role form
+  const {
+    register: regRole,
+    handleSubmit: handleRoleSubmit,
+    reset: resetRole,
+    formState: { errors: roleErrors },
+  } = useForm<AssignRoleFormValues>({
+    resolver: zodResolver(assignRoleSchema),
+    defaultValues: { role_name: '', enclave_id: '' },
+  })
+
+  const showSnack = (message: string, severity: 'success' | 'error') => {
+    setSnackbar({ open: true, message, severity })
   }
 
-  useEffect(() => { fetchData() }, [])
-
-  const clearMessages = (): void => { setError(''); setSuccess('') }
-
-  const handleCreateUser = async (e: FormEvent<HTMLFormElement>): Promise<void> => {
-    e.preventDefault()
-    clearMessages()
+  const onCreateUser = async (values: CreateUserFormValues) => {
     try {
-      await api.createUser(userForm)
-      setUserForm({ username: '', password: '', email: '' })
-      setShowCreateUser(false)
-      setSuccess('User created.')
-      fetchData()
-    } catch (err: unknown) {
-      const axiosErr = err as AxiosErrorResponse
-      setError(axiosErr.response?.data?.detail || 'Failed to create user.')
-    }
-  }
-
-  const handleDeleteUser = async (id: string): Promise<void> => {
-    if (!window.confirm('Delete this user?')) return
-    clearMessages()
-    try {
-      await api.deleteUser(id)
-      fetchData()
-    } catch (err: unknown) {
-      const axiosErr = err as AxiosErrorResponse
-      setError(axiosErr.response?.data?.detail || 'Failed to delete user.')
-    }
-  }
-
-  const handleAssignRole = async (e: FormEvent<HTMLFormElement>): Promise<void> => {
-    e.preventDefault()
-    clearMessages()
-    try {
-      await api.assignRole(roleForm.userId!, {
-        role_name: roleForm.role_name,
-        enclave_id: roleForm.enclave_id || undefined,
+      await createUserMut.mutateAsync({
+        username: values.username,
+        password: values.password,
+        email: values.email || undefined,
       })
-      setRoleForm({ userId: null, role_name: '', enclave_id: '' })
-      setSuccess('Role assigned.')
-      fetchData()
+      showSnack('User created.', 'success')
+      resetCreate()
+      setCreateDialogOpen(false)
     } catch (err: unknown) {
-      const axiosErr = err as AxiosErrorResponse
-      setError(axiosErr.response?.data?.detail || 'Failed to assign role.')
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to create user.'
+      showSnack(msg, 'error')
     }
   }
 
-  const handleRemoveRole = async (userId: string, roleEnclaveId: string): Promise<void> => {
-    clearMessages()
+  const handleDeleteUser = async (id: string) => {
+    if (!window.confirm('Delete this user?')) return
     try {
-      await api.removeRole(userId, roleEnclaveId)
-      fetchData()
+      await deleteUserMut.mutateAsync(id)
+      showSnack('User deleted.', 'success')
     } catch (err: unknown) {
-      const axiosErr = err as AxiosErrorResponse
-      setError(axiosErr.response?.data?.detail || 'Failed to remove role.')
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to delete user.'
+      showSnack(msg, 'error')
     }
   }
 
-  if (loading) return <div className="loading">Loading users...</div>
+  const onAssignRole = async (values: AssignRoleFormValues) => {
+    if (!roleDialogUserId) return
+    try {
+      await assignRoleMut.mutateAsync({
+        userId: roleDialogUserId,
+        data: {
+          role_name: values.role_name,
+          enclave_id: values.enclave_id || undefined,
+        },
+      })
+      showSnack('Role assigned.', 'success')
+      resetRole()
+      setRoleDialogUserId(null)
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to assign role.'
+      showSnack(msg, 'error')
+    }
+  }
+
+  const handleRemoveRole = async (userId: string, roleEnclaveId: string) => {
+    try {
+      await removeRoleMut.mutateAsync({ userId, roleEnclaveId })
+      showSnack('Role removed.', 'success')
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to remove role.'
+      showSnack(msg, 'error')
+    }
+  }
+
+  const roleDialogUser = users.find((u) => u.id === roleDialogUserId)
 
   return (
-    <div>
-      <div className="card">
-        <div className="card-header">
-          <h2>Users</h2>
-          {!showCreateUser && (
-            <button className="btn btn-primary btn-sm" onClick={() => setShowCreateUser(true)}>
-              + Add User
-            </button>
+    <>
+      <Card>
+        <CardHeader
+          title="Users"
+          action={
+            <Button variant="contained" startIcon={<AddIcon />} onClick={() => setCreateDialogOpen(true)}>
+              Add User
+            </Button>
+          }
+        />
+        <CardContent>
+          {queryError && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              Failed to load users.
+            </Alert>
           )}
-        </div>
 
-        {error && <div className="error-msg">{error}</div>}
-        {success && <div className="success-msg">{success}</div>}
+          {isLoading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+              <CircularProgress />
+            </Box>
+          ) : (
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Username</TableCell>
+                  <TableCell>Email</TableCell>
+                  <TableCell>Roles</TableCell>
+                  <TableCell>Actions</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {users.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={4} align="center">
+                      <Typography color="text.secondary" variant="body2">
+                        No users found.
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  users.map((u) => (
+                    <TableRow key={u.id} hover>
+                      <TableCell>
+                        <Typography fontWeight={600}>{u.username}</Typography>
+                      </TableCell>
+                      <TableCell>{u.email || '--'}</TableCell>
+                      <TableCell>
+                        {u.role_assignments && u.role_assignments.length > 0 ? (
+                          <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+                            {u.role_assignments.map((ra) => (
+                              <Chip
+                                key={ra.id}
+                                label={`${ra.role_name}${ra.enclave_name ? ` @ ${ra.enclave_name}` : ''}`}
+                                color="info"
+                                onDelete={() => handleRemoveRole(u.id, ra.id)}
+                              />
+                            ))}
+                          </Stack>
+                        ) : (
+                          <Typography color="text.secondary" variant="body2">
+                            None
+                          </Typography>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Stack direction="row" spacing={0.5}>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            color="success"
+                            onClick={() => {
+                              resetRole({ role_name: '', enclave_id: '' })
+                              setRoleDialogUserId(u.id)
+                            }}
+                          >
+                            + Role
+                          </Button>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            color="error"
+                            startIcon={<DeleteIcon fontSize="small" />}
+                            onClick={() => handleDeleteUser(u.id)}
+                          >
+                            Delete
+                          </Button>
+                        </Stack>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
-        {showCreateUser && (
-          <div className="inline-form">
-            <h3>Create User</h3>
-            <form onSubmit={handleCreateUser}>
-              <div className="form-group">
-                <label>Username</label>
-                <input
-                  type="text"
-                  value={userForm.username}
-                  onChange={(e) => setUserForm({ ...userForm, username: e.target.value })}
-                  required
-                />
-              </div>
-              <div className="form-group">
-                <label>Password</label>
-                <input
-                  type="password"
-                  value={userForm.password}
-                  onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
-                  required
-                />
-              </div>
-              <div className="form-group">
-                <label>Email</label>
-                <input
-                  type="email"
-                  value={userForm.email}
-                  onChange={(e) => setUserForm({ ...userForm, email: e.target.value })}
-                />
-              </div>
-              <div className="btn-group">
-                <button type="submit" className="btn btn-primary btn-sm">Create</button>
-                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowCreateUser(false)}>Cancel</button>
-              </div>
-            </form>
-          </div>
-        )}
+      {/* Create User Dialog */}
+      <Dialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Create User</DialogTitle>
+        <Box component="form" onSubmit={handleCreateSubmit(onCreateUser)} noValidate>
+          <DialogContent>
+            <TextField
+              label="Username"
+              {...regCreate('username')}
+              error={!!createErrors.username}
+              helperText={createErrors.username?.message}
+              autoFocus
+              sx={{ mb: 2 }}
+            />
+            <TextField
+              label="Password"
+              type="password"
+              {...regCreate('password')}
+              error={!!createErrors.password}
+              helperText={createErrors.password?.message}
+              sx={{ mb: 2 }}
+            />
+            <TextField
+              label="Email"
+              type="email"
+              {...regCreate('email')}
+              error={!!createErrors.email}
+              helperText={createErrors.email?.message}
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
+            <Button type="submit" variant="contained" disabled={createUserMut.isPending}>
+              Create
+            </Button>
+          </DialogActions>
+        </Box>
+      </Dialog>
 
-        <table>
-          <thead>
-            <tr>
-              <th>Username</th>
-              <th>Email</th>
-              <th>Roles</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.length === 0 ? (
-              <tr><td colSpan={4} style={{ textAlign: 'center', color: '#999' }}>No users found.</td></tr>
-            ) : (
-              users.map((u) => (
-                <tr key={u.id}>
-                  <td><strong>{u.username}</strong></td>
-                  <td>{u.email || '--'}</td>
-                  <td>
-                    {u.role_assignments && u.role_assignments.length > 0 ? (
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
-                        {u.role_assignments.map((ra) => (
-                          <span key={ra.id} className="badge badge-info" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
-                            {ra.role_name}{ra.enclave_name ? ` @ ${ra.enclave_name}` : ''}
-                            <button
-                              onClick={() => handleRemoveRole(u.id, ra.id)}
-                              style={{
-                                background: 'none', border: 'none', cursor: 'pointer',
-                                color: '#004085', fontWeight: 'bold', fontSize: '0.85rem', padding: 0,
-                              }}
-                              title="Remove role"
-                            >
-                              x
-                            </button>
-                          </span>
-                        ))}
-                      </div>
-                    ) : (
-                      <span style={{ color: '#999' }}>None</span>
-                    )}
-                  </td>
-                  <td>
-                    <div className="btn-group">
-                      <button
-                        className="btn btn-success btn-sm"
-                        onClick={() => setRoleForm({ ...roleForm, userId: u.id })}
-                      >
-                        + Role
-                      </button>
-                      <button className="btn btn-danger btn-sm" onClick={() => handleDeleteUser(u.id)}>Delete</button>
-                    </div>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+      {/* Assign Role Dialog */}
+      <Dialog
+        open={!!roleDialogUserId}
+        onClose={() => setRoleDialogUserId(null)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Assign Role to {roleDialogUser?.username}</DialogTitle>
+        <Box component="form" onSubmit={handleRoleSubmit(onAssignRole)} noValidate>
+          <DialogContent>
+            <TextField
+              label="Role"
+              select
+              {...regRole('role_name')}
+              error={!!roleErrors.role_name}
+              helperText={roleErrors.role_name?.message}
+              sx={{ mb: 2 }}
+              defaultValue=""
+            >
+              <MenuItem value="">Select role...</MenuItem>
+              <MenuItem value="admin">admin</MenuItem>
+              <MenuItem value="analyst">analyst</MenuItem>
+              <MenuItem value="viewer">viewer</MenuItem>
+            </TextField>
+            <TextField
+              label="Enclave (optional)"
+              select
+              {...regRole('enclave_id')}
+              defaultValue=""
+            >
+              <MenuItem value="">Global</MenuItem>
+              {enclaves.map((enc) => (
+                <MenuItem key={enc.id} value={enc.id}>
+                  {enc.name}
+                </MenuItem>
+              ))}
+            </TextField>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setRoleDialogUserId(null)}>Cancel</Button>
+            <Button type="submit" variant="contained" disabled={assignRoleMut.isPending}>
+              Assign
+            </Button>
+          </DialogActions>
+        </Box>
+      </Dialog>
 
-      {roleForm.userId && (
-        <div className="card">
-          <div className="card-header">
-            <h2>Assign Role to {users.find((u) => u.id === roleForm.userId)?.username}</h2>
-          </div>
-          <form onSubmit={handleAssignRole}>
-            <div className="filter-bar">
-              <div className="form-group">
-                <label>Role</label>
-                <select
-                  value={roleForm.role_name}
-                  onChange={(e) => setRoleForm({ ...roleForm, role_name: e.target.value })}
-                  required
-                >
-                  <option value="">Select role...</option>
-                  <option value="admin">admin</option>
-                  <option value="analyst">analyst</option>
-                  <option value="viewer">viewer</option>
-                </select>
-              </div>
-              <div className="form-group">
-                <label>Enclave (optional)</label>
-                <select
-                  value={roleForm.enclave_id}
-                  onChange={(e) => setRoleForm({ ...roleForm, enclave_id: e.target.value })}
-                >
-                  <option value="">Global</option>
-                  {enclaves.map((enc) => (
-                    <option key={enc.id} value={enc.id}>{enc.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="form-group" style={{ display: 'flex', alignItems: 'flex-end', gap: '0.5rem' }}>
-                <button type="submit" className="btn btn-primary btn-sm">Assign</button>
-                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setRoleForm({ userId: null, role_name: '', enclave_id: '' })}>Cancel</button>
-              </div>
-            </div>
-          </form>
-        </div>
-      )}
-    </div>
+      {/* Snackbar */}
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={4000}
+        onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+          severity={snackbar.severity}
+          variant="filled"
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
+    </>
   )
 }

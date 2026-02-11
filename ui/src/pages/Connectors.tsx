@@ -1,208 +1,282 @@
-import React, { useState, useEffect, FormEvent } from 'react'
+import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import * as api from '../api/client'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  Chip,
+  CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  MenuItem,
+  Snackbar,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
+  TextField,
+  Typography,
+} from '@mui/material'
+import AddIcon from '@mui/icons-material/Add'
+import {
+  ConnectorType,
+  useConnectors,
+  useConnectorTypes,
+  useEnclaves,
+  useCreateConnector,
+} from '../api/client'
 
-interface ConnectorForm {
-  name: string
-  connector_type: string
-  enclave_id: string
-  config: string
-  cron_expression: string
-}
+const connectorSchema = z.object({
+  name: z.string().min(1, 'Name is required'),
+  connector_type_code: z.string().min(1, 'Type is required'),
+  enclave_id: z.string().min(1, 'Enclave is required'),
+  config: z.string().refine(
+    (v) => {
+      try {
+        JSON.parse(v)
+        return true
+      } catch {
+        return false
+      }
+    },
+    'Invalid JSON',
+  ),
+  cron_expression: z.string().optional(),
+})
 
-interface AxiosErrorResponse {
-  response?: {
-    data?: {
-      detail?: string
-    }
-  }
-}
+type ConnectorFormValues = z.infer<typeof connectorSchema>
 
 export default function Connectors(): React.ReactElement {
   const navigate = useNavigate()
-  const [connectors, setConnectors] = useState<api.Connector[]>([])
-  const [connectorTypes, setConnectorTypes] = useState<(string | api.ConnectorType)[]>([])
-  const [enclaves, setEnclaves] = useState<api.Enclave[]>([])
-  const [loading, setLoading] = useState<boolean>(true)
-  const [error, setError] = useState<string>('')
-  const [showForm, setShowForm] = useState<boolean>(false)
-  const [form, setForm] = useState<ConnectorForm>({
-    name: '',
-    connector_type: '',
-    enclave_id: '',
-    config: '{}',
-    cron_expression: '',
+  const { data: connectors = [], isLoading, error: queryError } = useConnectors()
+  const { data: connectorTypes = [] } = useConnectorTypes()
+  const { data: enclaves = [] } = useEnclaves()
+  const createMut = useCreateConnector()
+
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
+    open: false,
+    message: '',
+    severity: 'success',
   })
 
-  const fetchData = async (): Promise<void> => {
-    setLoading(true)
-    try {
-      const [cRes, tRes, eRes] = await Promise.all([
-        api.getConnectors(),
-        api.getConnectorTypes(),
-        api.getEnclaves(),
-      ])
-      setConnectors(Array.isArray(cRes.data) ? cRes.data : (cRes.data as api.PaginatedResponse<api.Connector>).items || [])
-      setConnectorTypes(Array.isArray(tRes.data) ? tRes.data : (tRes.data as { types: (string | api.ConnectorType)[] }).types || [])
-      setEnclaves(Array.isArray(eRes.data) ? eRes.data : (eRes.data as api.PaginatedResponse<api.Enclave>).items || [])
-    } catch {
-      setError('Failed to load connectors.')
-    } finally {
-      setLoading(false)
-    }
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors },
+  } = useForm<ConnectorFormValues>({
+    resolver: zodResolver(connectorSchema),
+    defaultValues: {
+      name: '',
+      connector_type_code: '',
+      enclave_id: '',
+      config: '{}',
+      cron_expression: '',
+    },
+  })
+
+  const openCreate = () => {
+    reset({ name: '', connector_type_code: '', enclave_id: '', config: '{}', cron_expression: '' })
+    setDialogOpen(true)
   }
 
-  useEffect(() => { fetchData() }, [])
-
-  const handleSubmit = async (e: FormEvent<HTMLFormElement>): Promise<void> => {
-    e.preventDefault()
-    setError('')
+  const onSubmit = async (values: ConnectorFormValues) => {
     try {
-      let parsedConfig: Record<string, unknown>
-      try {
-        parsedConfig = JSON.parse(form.config)
-      } catch {
-        setError('Config must be valid JSON.')
-        return
-      }
-      await api.createConnector({
-        name: form.name,
-        connector_type: form.connector_type,
-        enclave_id: form.enclave_id,
-        config: parsedConfig,
-        cron_expression: form.cron_expression || null,
+      await createMut.mutateAsync({
+        name: values.name,
+        connector_type: values.connector_type_code,
+        enclave_id: values.enclave_id,
+        config: JSON.parse(values.config),
+        cron_expression: values.cron_expression || null,
       })
-      setShowForm(false)
-      setForm({ name: '', connector_type: '', enclave_id: '', config: '{}', cron_expression: '' })
-      fetchData()
+      setSnackbar({ open: true, message: 'Connector created.', severity: 'success' })
+      setDialogOpen(false)
     } catch (err: unknown) {
-      const axiosErr = err as AxiosErrorResponse
-      setError(axiosErr.response?.data?.detail || 'Failed to create connector.')
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        'Failed to create connector.'
+      setSnackbar({ open: true, message: msg, severity: 'error' })
     }
-  }
-
-  const badgeClass = (connector: api.Connector): string => {
-    if (!connector.enabled) return 'badge badge-disabled'
-    return 'badge badge-active'
   }
 
   return (
-    <div>
-      <div className="card">
-        <div className="card-header">
-          <h2>Connectors</h2>
-          {!showForm && (
-            <button className="btn btn-primary btn-sm" onClick={() => setShowForm(true)}>
-              + Add Connector
-            </button>
+    <>
+      <Card>
+        <CardHeader
+          title="Connectors"
+          action={
+            <Button variant="contained" startIcon={<AddIcon />} onClick={openCreate}>
+              Add Connector
+            </Button>
+          }
+        />
+        <CardContent>
+          {queryError && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              Failed to load connectors.
+            </Alert>
           )}
-        </div>
 
-        {error && <div className="error-msg">{error}</div>}
+          {isLoading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+              <CircularProgress />
+            </Box>
+          ) : (
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Name</TableCell>
+                  <TableCell>Type</TableCell>
+                  <TableCell>Enclave</TableCell>
+                  <TableCell>Cron</TableCell>
+                  <TableCell>Status</TableCell>
+                  <TableCell>Last Run</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {connectors.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={6} align="center">
+                      <Typography color="text.secondary" variant="body2">
+                        No connectors configured.
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  connectors.map((c) => (
+                    <TableRow
+                      key={c.id}
+                      hover
+                      sx={{ cursor: 'pointer' }}
+                      onClick={() => navigate(`/connectors/${c.id}`)}
+                    >
+                      <TableCell>
+                        <Typography fontWeight={600}>{c.name}</Typography>
+                      </TableCell>
+                      <TableCell>{c.connector_type}</TableCell>
+                      <TableCell>{c.enclave_name || c.enclave_id || '--'}</TableCell>
+                      <TableCell>
+                        <Typography variant="body2" fontFamily="monospace">
+                          {c.cron_expression || '--'}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Chip
+                          label={c.enabled ? 'Enabled' : 'Disabled'}
+                          color={c.enabled ? 'success' : 'default'}
+                          variant={c.enabled ? 'filled' : 'outlined'}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        {c.last_run_at ? new Date(c.last_run_at).toLocaleString() : '--'}
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
-        {showForm && (
-          <div className="inline-form">
-            <h3>New Connector</h3>
-            <form onSubmit={handleSubmit}>
-              <div className="form-group">
-                <label>Name</label>
-                <input
-                  type="text"
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  required
-                />
-              </div>
-              <div className="form-group">
-                <label>Type</label>
-                <select
-                  value={form.connector_type}
-                  onChange={(e) => setForm({ ...form, connector_type: e.target.value })}
-                  required
-                >
-                  <option value="">Select type...</option>
-                  {connectorTypes.map((t) => {
-                    const val = typeof t === 'string' ? t : t.name || t.id || ''
-                    const label = typeof t === 'string' ? t : t.label || t.name || t.id || ''
-                    return <option key={val} value={val}>{label}</option>
-                  })}
-                </select>
-              </div>
-              <div className="form-group">
-                <label>Enclave</label>
-                <select
-                  value={form.enclave_id}
-                  onChange={(e) => setForm({ ...form, enclave_id: e.target.value })}
-                  required
-                >
-                  <option value="">Select enclave...</option>
-                  {enclaves.map((enc) => (
-                    <option key={enc.id} value={enc.id}>{enc.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="form-group">
-                <label>Config (JSON)</label>
-                <textarea
-                  value={form.config}
-                  onChange={(e) => setForm({ ...form, config: e.target.value })}
-                  rows={5}
-                />
-              </div>
-              <div className="form-group">
-                <label>Cron Expression</label>
-                <input
-                  type="text"
-                  value={form.cron_expression}
-                  onChange={(e) => setForm({ ...form, cron_expression: e.target.value })}
-                  placeholder="e.g. 0 2 * * *"
-                />
-              </div>
-              <div className="btn-group">
-                <button type="submit" className="btn btn-primary btn-sm">Create</button>
-                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowForm(false)}>Cancel</button>
-              </div>
-            </form>
-          </div>
-        )}
+      {/* Create Dialog */}
+      <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>New Connector</DialogTitle>
+        <Box component="form" onSubmit={handleSubmit(onSubmit)} noValidate>
+          <DialogContent>
+            <TextField
+              label="Name"
+              {...register('name')}
+              error={!!errors.name}
+              helperText={errors.name?.message}
+              autoFocus
+              sx={{ mb: 2 }}
+            />
+            <TextField
+              label="Type"
+              select
+              {...register('connector_type_code')}
+              error={!!errors.connector_type_code}
+              helperText={errors.connector_type_code?.message}
+              sx={{ mb: 2 }}
+              defaultValue=""
+            >
+              <MenuItem value="">Select type...</MenuItem>
+              {connectorTypes.map((t) => {
+                const val = typeof t === 'string' ? t : t.name || t.id || ''
+                const label = typeof t === 'string' ? t : t.label || t.name || t.id || ''
+                return (
+                  <MenuItem key={val} value={val}>
+                    {label}
+                  </MenuItem>
+                )
+              })}
+            </TextField>
+            <TextField
+              label="Enclave"
+              select
+              {...register('enclave_id')}
+              error={!!errors.enclave_id}
+              helperText={errors.enclave_id?.message}
+              sx={{ mb: 2 }}
+              defaultValue=""
+            >
+              <MenuItem value="">Select enclave...</MenuItem>
+              {enclaves.map((enc) => (
+                <MenuItem key={enc.id} value={enc.id}>
+                  {enc.name}
+                </MenuItem>
+              ))}
+            </TextField>
+            <TextField
+              label="Config (JSON)"
+              multiline
+              minRows={4}
+              {...register('config')}
+              error={!!errors.config}
+              helperText={errors.config?.message}
+              sx={{ mb: 2, '& textarea': { fontFamily: 'monospace', fontSize: '0.85rem' } }}
+            />
+            <TextField
+              label="Cron Expression"
+              {...register('cron_expression')}
+              placeholder="e.g. 0 2 * * *"
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setDialogOpen(false)}>Cancel</Button>
+            <Button type="submit" variant="contained" disabled={createMut.isPending}>
+              Create
+            </Button>
+          </DialogActions>
+        </Box>
+      </Dialog>
 
-        {loading ? (
-          <div className="loading">Loading connectors...</div>
-        ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Type</th>
-                <th>Enclave</th>
-                <th>Cron</th>
-                <th>Status</th>
-                <th>Last Run</th>
-              </tr>
-            </thead>
-            <tbody>
-              {connectors.length === 0 ? (
-                <tr><td colSpan={6} style={{ textAlign: 'center', color: '#999' }}>No connectors configured.</td></tr>
-              ) : (
-                connectors.map((c) => (
-                  <tr key={c.id} className="clickable" onClick={() => navigate(`/connectors/${c.id}`)}>
-                    <td><strong>{c.name}</strong></td>
-                    <td>{c.connector_type}</td>
-                    <td>{c.enclave_name || c.enclave_id || '--'}</td>
-                    <td><code>{c.cron_expression || '--'}</code></td>
-                    <td>
-                      <span className={badgeClass(c)}>
-                        {c.enabled ? 'Enabled' : 'Disabled'}
-                      </span>
-                    </td>
-                    <td>{c.last_run_at ? new Date(c.last_run_at).toLocaleString() : '--'}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </div>
+      {/* Snackbar */}
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={4000}
+        onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+          severity={snackbar.severity}
+          variant="filled"
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
+    </>
   )
 }

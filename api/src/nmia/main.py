@@ -1,5 +1,6 @@
 """FastAPI application entry point for the NMIA backend."""
 
+import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -8,9 +9,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from nmia.settings import settings
 from nmia.core.db import SessionLocal
-from nmia.core.models import ConnectorType, Enclave
-from nmia.auth.security import hash_password
-from nmia.auth.models import Role, User, UserRoleEnclave
+from nmia.core.models import ConnectorType
+from nmia.auth.models import Role, User
+
+logger = logging.getLogger("nmia")
 
 
 def _seed_connector_types() -> None:
@@ -62,54 +64,23 @@ def _seed_roles() -> None:
         db.close()
 
 
-def _seed_default_admin() -> None:
-    """Create a default admin user (admin / admin) when the users table is
-    empty.  This bootstrapping account should be changed immediately in
-    production.
-    """
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Application lifespan handler -- seeds reference data on startup."""
+    _seed_connector_types()
+    _seed_roles()
+
+    # Warn if no users exist (bootstrap has not been run yet)
     db = SessionLocal()
     try:
         user_count = db.query(User).count()
-        if user_count > 0:
-            return
-
-        # Create a default enclave for the admin
-        default_enclave = db.query(Enclave).filter(Enclave.name == "Default").first()
-        if default_enclave is None:
-            default_enclave = Enclave(name="Default", description="Default enclave created during bootstrap.")
-            db.add(default_enclave)
-            db.flush()
-
-        # Create the admin user
-        admin_user = User(
-            username="admin",
-            password_hash=hash_password("admin"),
-            email="admin@nmia.local",
-        )
-        db.add(admin_user)
-        db.flush()
-
-        # Assign the admin role in the default enclave
-        admin_role = db.query(Role).filter(Role.name == "admin").first()
-        if admin_role is not None:
-            assignment = UserRoleEnclave(
-                user_id=admin_user.id,
-                role_id=admin_role.id,
-                enclave_id=default_enclave.id,
+        if user_count == 0:
+            logger.warning(
+                "No users found. Run 'python -m nmia.bootstrap' to create the admin account."
             )
-            db.add(assignment)
-
-        db.commit()
     finally:
         db.close()
 
-
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Application lifespan handler -- runs seed functions on startup."""
-    _seed_connector_types()
-    _seed_roles()
-    _seed_default_admin()
     yield
 
 

@@ -1,166 +1,237 @@
-import React, { useState, useEffect, FormEvent } from 'react'
+import React, { useState } from 'react'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  IconButton,
+  Snackbar,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
+  TextField,
+  Typography,
+} from '@mui/material'
+import EditIcon from '@mui/icons-material/Edit'
+import DeleteIcon from '@mui/icons-material/Delete'
+import AddIcon from '@mui/icons-material/Add'
 import { useAuth } from '../auth/AuthContext'
-import * as api from '../api/client'
+import {
+  Enclave,
+  useEnclaves,
+  useCreateEnclave,
+  useUpdateEnclave,
+  useDeleteEnclave,
+} from '../api/client'
 
-interface EnclaveForm {
-  name: string
-  description: string
-}
+const enclaveSchema = z.object({
+  name: z.string().min(1, 'Name is required'),
+  description: z.string().optional(),
+})
 
-interface AxiosErrorResponse {
-  response?: {
-    data?: {
-      detail?: string
-    }
-  }
-}
+type EnclaveFormValues = z.infer<typeof enclaveSchema>
 
 export default function Enclaves(): React.ReactElement {
   const { isAdmin } = useAuth()
-  const [enclaves, setEnclaves] = useState<api.Enclave[]>([])
-  const [loading, setLoading] = useState<boolean>(true)
-  const [error, setError] = useState<string>('')
-  const [showForm, setShowForm] = useState<boolean>(false)
+  const { data: enclaves = [], isLoading, error: queryError } = useEnclaves()
+  const createMutation = useCreateEnclave()
+  const updateMutation = useUpdateEnclave()
+  const deleteMutation = useDeleteEnclave()
+
+  const [dialogOpen, setDialogOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [form, setForm] = useState<EnclaveForm>({ name: '', description: '' })
+  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
+    open: false,
+    message: '',
+    severity: 'success',
+  })
 
-  const fetchEnclaves = async (): Promise<void> => {
-    setLoading(true)
-    try {
-      const res = await api.getEnclaves()
-      setEnclaves(Array.isArray(res.data) ? res.data : (res.data as api.PaginatedResponse<api.Enclave>).items || [])
-    } catch {
-      setError('Failed to load enclaves.')
-    } finally {
-      setLoading(false)
-    }
-  }
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors },
+  } = useForm<EnclaveFormValues>({
+    resolver: zodResolver(enclaveSchema),
+    defaultValues: { name: '', description: '' },
+  })
 
-  useEffect(() => { fetchEnclaves() }, [])
-
-  const resetForm = (): void => {
-    setForm({ name: '', description: '' })
+  const openCreate = () => {
+    reset({ name: '', description: '' })
     setEditingId(null)
-    setShowForm(false)
+    setDialogOpen(true)
   }
 
-  const handleEdit = (enc: api.Enclave): void => {
-    setForm({ name: enc.name, description: enc.description || '' })
+  const openEdit = (enc: Enclave) => {
+    reset({ name: enc.name, description: enc.description || '' })
     setEditingId(enc.id)
-    setShowForm(true)
+    setDialogOpen(true)
   }
 
-  const handleSubmit = async (e: FormEvent<HTMLFormElement>): Promise<void> => {
-    e.preventDefault()
-    setError('')
+  const closeDialog = () => {
+    setDialogOpen(false)
+    setEditingId(null)
+  }
+
+  const onSubmit = async (values: EnclaveFormValues) => {
     try {
       if (editingId) {
-        await api.updateEnclave(editingId, form)
+        await updateMutation.mutateAsync({ id: editingId, data: values })
+        setSnackbar({ open: true, message: 'Enclave updated.', severity: 'success' })
       } else {
-        await api.createEnclave(form)
+        await createMutation.mutateAsync(values)
+        setSnackbar({ open: true, message: 'Enclave created.', severity: 'success' })
       }
-      resetForm()
-      fetchEnclaves()
+      closeDialog()
     } catch (err: unknown) {
-      const axiosErr = err as AxiosErrorResponse
-      setError(axiosErr.response?.data?.detail || 'Failed to save enclave.')
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to save enclave.'
+      setSnackbar({ open: true, message: msg, severity: 'error' })
     }
   }
 
-  const handleDelete = async (id: string): Promise<void> => {
+  const handleDelete = async (id: string) => {
     if (!window.confirm('Delete this enclave? This cannot be undone.')) return
     try {
-      await api.deleteEnclave(id)
-      fetchEnclaves()
+      await deleteMutation.mutateAsync(id)
+      setSnackbar({ open: true, message: 'Enclave deleted.', severity: 'success' })
     } catch (err: unknown) {
-      const axiosErr = err as AxiosErrorResponse
-      setError(axiosErr.response?.data?.detail || 'Failed to delete enclave.')
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to delete enclave.'
+      setSnackbar({ open: true, message: msg, severity: 'error' })
     }
   }
 
   return (
-    <div>
-      <div className="card">
-        <div className="card-header">
-          <h2>Enclaves</h2>
-          {isAdmin && !showForm && (
-            <button className="btn btn-primary btn-sm" onClick={() => setShowForm(true)}>
-              + Add Enclave
-            </button>
+    <>
+      <Card>
+        <CardHeader
+          title="Enclaves"
+          action={
+            isAdmin ? (
+              <Button variant="contained" startIcon={<AddIcon />} onClick={openCreate}>
+                Add Enclave
+              </Button>
+            ) : undefined
+          }
+        />
+        <CardContent>
+          {queryError && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              Failed to load enclaves.
+            </Alert>
           )}
-        </div>
 
-        {error && <div className="error-msg">{error}</div>}
+          {isLoading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+              <CircularProgress />
+            </Box>
+          ) : (
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Name</TableCell>
+                  <TableCell>Description</TableCell>
+                  <TableCell>Created</TableCell>
+                  {isAdmin && <TableCell>Actions</TableCell>}
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {enclaves.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={isAdmin ? 4 : 3} align="center">
+                      <Typography color="text.secondary" variant="body2">
+                        No enclaves found.
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  enclaves.map((enc) => (
+                    <TableRow key={enc.id} hover>
+                      <TableCell>
+                        <Typography fontWeight={600}>{enc.name}</Typography>
+                      </TableCell>
+                      <TableCell>{enc.description || '--'}</TableCell>
+                      <TableCell>
+                        {enc.created_at ? new Date(enc.created_at).toLocaleDateString() : '--'}
+                      </TableCell>
+                      {isAdmin && (
+                        <TableCell>
+                          <IconButton size="small" onClick={() => openEdit(enc)} color="primary">
+                            <EditIcon fontSize="small" />
+                          </IconButton>
+                          <IconButton size="small" onClick={() => handleDelete(enc.id)} color="error">
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
-        {showForm && (
-          <div className="inline-form">
-            <h3>{editingId ? 'Edit Enclave' : 'New Enclave'}</h3>
-            <form onSubmit={handleSubmit}>
-              <div className="form-group">
-                <label>Name</label>
-                <input
-                  type="text"
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  required
-                />
-              </div>
-              <div className="form-group">
-                <label>Description</label>
-                <input
-                  type="text"
-                  value={form.description}
-                  onChange={(e) => setForm({ ...form, description: e.target.value })}
-                />
-              </div>
-              <div className="btn-group">
-                <button type="submit" className="btn btn-primary btn-sm">
-                  {editingId ? 'Update' : 'Create'}
-                </button>
-                <button type="button" className="btn btn-secondary btn-sm" onClick={resetForm}>
-                  Cancel
-                </button>
-              </div>
-            </form>
-          </div>
-        )}
+      {/* Create / Edit Dialog */}
+      <Dialog open={dialogOpen} onClose={closeDialog} maxWidth="sm" fullWidth>
+        <DialogTitle>{editingId ? 'Edit Enclave' : 'New Enclave'}</DialogTitle>
+        <Box component="form" onSubmit={handleSubmit(onSubmit)} noValidate>
+          <DialogContent>
+            <TextField
+              label="Name"
+              {...register('name')}
+              error={!!errors.name}
+              helperText={errors.name?.message}
+              autoFocus
+              sx={{ mb: 2 }}
+            />
+            <TextField
+              label="Description"
+              {...register('description')}
+              error={!!errors.description}
+              helperText={errors.description?.message}
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={closeDialog}>Cancel</Button>
+            <Button
+              type="submit"
+              variant="contained"
+              disabled={createMutation.isPending || updateMutation.isPending}
+            >
+              {editingId ? 'Update' : 'Create'}
+            </Button>
+          </DialogActions>
+        </Box>
+      </Dialog>
 
-        {loading ? (
-          <div className="loading">Loading enclaves...</div>
-        ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Description</th>
-                <th>Created</th>
-                {isAdmin && <th>Actions</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {enclaves.length === 0 ? (
-                <tr><td colSpan={isAdmin ? 4 : 3} style={{ textAlign: 'center', color: '#999' }}>No enclaves found.</td></tr>
-              ) : (
-                enclaves.map((enc) => (
-                  <tr key={enc.id}>
-                    <td><strong>{enc.name}</strong></td>
-                    <td>{enc.description || '--'}</td>
-                    <td>{enc.created_at ? new Date(enc.created_at).toLocaleDateString() : '--'}</td>
-                    {isAdmin && (
-                      <td>
-                        <div className="btn-group">
-                          <button className="btn btn-secondary btn-sm" onClick={() => handleEdit(enc)}>Edit</button>
-                          <button className="btn btn-danger btn-sm" onClick={() => handleDelete(enc.id)}>Delete</button>
-                        </div>
-                      </td>
-                    )}
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </div>
+      {/* Snackbar */}
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={4000}
+        onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+          severity={snackbar.severity}
+          variant="filled"
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
+    </>
   )
 }

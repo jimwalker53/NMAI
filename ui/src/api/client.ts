@@ -1,4 +1,5 @@
 import axios, { AxiosResponse, InternalAxiosRequestConfig } from 'axios'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 
 // ── Shared interfaces for API responses ──────────────────────────────
 
@@ -134,6 +135,18 @@ client.interceptors.response.use(
   },
 )
 
+// ── Helper to normalize API list responses ──────────────────────────
+
+function normalizeList<T>(data: T[] | PaginatedResponse<T>): T[] {
+  return Array.isArray(data) ? data : (data.items ?? [])
+}
+
+function normalizeConnectorTypes(
+  data: (string | ConnectorType)[] | { types: (string | ConnectorType)[] },
+): (string | ConnectorType)[] {
+  return Array.isArray(data) ? data : (data.types ?? [])
+}
+
 // ── Auth ─────────────────────────────────────────────────────────────
 export function login(username: string, password: string): Promise<AxiosResponse<LoginResponse>> {
   const params = new URLSearchParams()
@@ -249,6 +262,253 @@ export function getExpiringReport(days: number = 90): Promise<AxiosResponse<Iden
 }
 export function getOrphanedReport(): Promise<AxiosResponse<Identity[] | PaginatedResponse<Identity>>> {
   return client.get('/api/v1/reports/orphaned')
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ── React Query Keys ────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+
+export const queryKeys = {
+  enclaves: ['enclaves'] as const,
+  users: ['users'] as const,
+  connectorTypes: ['connectorTypes'] as const,
+  connectors: ['connectors'] as const,
+  connector: (id: string) => ['connector', id] as const,
+  connectorJobs: (id: string) => ['connectorJobs', id] as const,
+  identities: (params: IdentityQueryParams) => ['identities', params] as const,
+  identity: (id: string) => ['identity', id] as const,
+  expiringReport: (days: number) => ['expiringReport', days] as const,
+  orphanedReport: ['orphanedReport'] as const,
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ── React Query Hooks – Enclaves ────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+
+export function useEnclaves() {
+  return useQuery({
+    queryKey: queryKeys.enclaves,
+    queryFn: () => getEnclaves().then((r) => normalizeList(r.data)),
+  })
+}
+
+export function useCreateEnclave() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: Partial<Enclave>) => createEnclave(data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.enclaves }),
+  })
+}
+
+export function useUpdateEnclave() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Partial<Enclave> }) => updateEnclave(id, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.enclaves }),
+  })
+}
+
+export function useDeleteEnclave() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => deleteEnclave(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.enclaves }),
+  })
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ── React Query Hooks – Users ───────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+
+export function useUsers() {
+  return useQuery({
+    queryKey: queryKeys.users,
+    queryFn: () => getUsers().then((r) => normalizeList(r.data)),
+  })
+}
+
+export function useCreateUser() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: { username: string; password: string; email?: string }) => createUser(data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.users }),
+  })
+}
+
+export function useDeleteUser() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => deleteUser(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.users }),
+  })
+}
+
+export function useAssignRole() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ userId, data }: { userId: string; data: { role_name: string; enclave_id?: string } }) =>
+      assignRole(userId, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.users }),
+  })
+}
+
+export function useRemoveRole() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ userId, roleEnclaveId }: { userId: string; roleEnclaveId: string }) =>
+      removeRole(userId, roleEnclaveId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.users }),
+  })
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ── React Query Hooks – Connectors ──────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+
+export function useConnectorTypes() {
+  return useQuery({
+    queryKey: queryKeys.connectorTypes,
+    queryFn: () => getConnectorTypes().then((r) => normalizeConnectorTypes(r.data)),
+  })
+}
+
+export function useConnectors() {
+  return useQuery({
+    queryKey: queryKeys.connectors,
+    queryFn: () => getConnectors().then((r) => normalizeList(r.data)),
+  })
+}
+
+export function useConnector(id: string) {
+  return useQuery({
+    queryKey: queryKeys.connector(id),
+    queryFn: () => getConnector(id).then((r) => r.data),
+    enabled: !!id,
+  })
+}
+
+export function useCreateConnector() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: {
+      name: string
+      connector_type: string
+      enclave_id: string
+      config: Record<string, unknown>
+      cron_expression?: string | null
+    }) => createConnector(data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.connectors }),
+  })
+}
+
+export function useUpdateConnector() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Partial<Connector> }) => updateConnector(id, data),
+    onSuccess: (_res, vars) => {
+      qc.invalidateQueries({ queryKey: queryKeys.connectors })
+      qc.invalidateQueries({ queryKey: queryKeys.connector(vars.id) })
+    },
+  })
+}
+
+export function useDeleteConnector() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => deleteConnector(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.connectors }),
+  })
+}
+
+export function useTestConnector() {
+  return useMutation({
+    mutationFn: (id: string) => testConnector(id).then((r) => r.data),
+  })
+}
+
+export function useRunConnector() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => runConnector(id),
+    onSuccess: (_res, id) => {
+      qc.invalidateQueries({ queryKey: queryKeys.connectorJobs(id) })
+    },
+  })
+}
+
+export function useConnectorJobs(id: string, refetchInterval?: number | false) {
+  return useQuery({
+    queryKey: queryKeys.connectorJobs(id),
+    queryFn: () => getConnectorJobs(id).then((r) => normalizeList(r.data)),
+    enabled: !!id,
+    refetchInterval: refetchInterval ?? false,
+  })
+}
+
+// ── Ingest (CSV) ────────────────────────────────────────────────────
+
+export function useUploadCSV() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ connectorId, file }: { connectorId: string; file: File }) => uploadCSV(connectorId, file),
+    onSuccess: (_res, vars) => {
+      qc.invalidateQueries({ queryKey: queryKeys.connectorJobs(vars.connectorId) })
+    },
+  })
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ── React Query Hooks – Identities ──────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+
+export function useIdentities(params: IdentityQueryParams) {
+  return useQuery({
+    queryKey: queryKeys.identities(params),
+    queryFn: async () => {
+      const res = await getIdentities(params)
+      if (Array.isArray(res.data)) {
+        return { items: res.data, total: res.data.length }
+      }
+      const paginated = res.data as PaginatedResponse<Identity>
+      return { items: paginated.items ?? [], total: paginated.total ?? paginated.items?.length ?? 0 }
+    },
+  })
+}
+
+export function useIdentity(id: string) {
+  return useQuery({
+    queryKey: queryKeys.identity(id),
+    queryFn: () => getIdentity(id).then((r) => r.data),
+    enabled: !!id,
+  })
+}
+
+export function useUpdateIdentity() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Partial<Identity> }) => updateIdentity(id, data),
+    onSuccess: (_res, vars) => {
+      qc.invalidateQueries({ queryKey: queryKeys.identity(vars.id) })
+    },
+  })
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ── React Query Hooks – Reports ─────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+
+export function useExpiringReport(days: number) {
+  return useQuery({
+    queryKey: queryKeys.expiringReport(days),
+    queryFn: () => getExpiringReport(days).then((r) => normalizeList(r.data)),
+  })
+}
+
+export function useOrphanedReport() {
+  return useQuery({
+    queryKey: queryKeys.orphanedReport,
+    queryFn: () => getOrphanedReport().then((r) => normalizeList(r.data)),
+  })
 }
 
 export default client

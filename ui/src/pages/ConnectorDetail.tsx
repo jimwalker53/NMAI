@@ -1,16 +1,51 @@
-import React, { useState, useEffect, useRef, useCallback, ChangeEvent } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
-import * as api from '../api/client'
+import React, { useState, useEffect, useCallback, useRef, ChangeEvent } from 'react'
+import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
+import {
+  Alert,
+  Box,
+  Breadcrumbs,
+  Button,
+  ButtonGroup,
+  Card,
+  CardContent,
+  CardHeader,
+  Chip,
+  CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
+  LinearProgress,
+  Link,
+  Paper,
+  Snackbar,
+  Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
+  TextField,
+  Typography,
+} from '@mui/material'
+import RefreshIcon from '@mui/icons-material/Refresh'
+import {
+  TestResult,
+  useConnector,
+  useConnectorJobs,
+  useUpdateConnector,
+  useDeleteConnector,
+  useTestConnector,
+  useRunConnector,
+  useUploadCSV,
+} from '../api/client'
 
-interface AxiosErrorResponse {
-  response?: {
-    data?: {
-      detail?: string
-    }
-  }
-}
+// ── Cron helper ──────────────────────────────────────────────────────
 
-/** Simple cron-to-human-readable helper */
 function describeCron(expr: string): string {
   if (!expr) return 'Not scheduled'
   const parts = expr.trim().split(/\s+/)
@@ -32,343 +67,410 @@ function describeCron(expr: string): string {
   return expr
 }
 
+// ── Config form schema ───────────────────────────────────────────────
+
+const configSchema = z.object({
+  config: z.string().refine(
+    (v) => {
+      try {
+        JSON.parse(v)
+        return true
+      } catch {
+        return false
+      }
+    },
+    'Config must be valid JSON',
+  ),
+  cron_expression: z.string().optional(),
+})
+
+type ConfigFormValues = z.infer<typeof configSchema>
+
+// ── Job status chip color helper ────────────────────────────────────
+
+function jobChipColor(status: string): 'success' | 'error' | 'info' | 'warning' | 'default' {
+  switch (status) {
+    case 'completed':
+    case 'success':
+      return 'success'
+    case 'failed':
+    case 'error':
+      return 'error'
+    case 'running':
+      return 'info'
+    case 'queued':
+    case 'pending':
+      return 'warning'
+    default:
+      return 'default'
+  }
+}
+
+// ── Component ────────────────────────────────────────────────────────
+
 export default function ConnectorDetail(): React.ReactElement {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const [connector, setConnector] = useState<api.Connector | null>(null)
-  const [jobs, setJobs] = useState<api.ConnectorJob[]>([])
-  const [loading, setLoading] = useState<boolean>(true)
-  const [error, setError] = useState<string>('')
-  const [success, setSuccess] = useState<string>('')
-  const [configText, setConfigText] = useState<string>('{}')
-  const [cronText, setCronText] = useState<string>('')
-  const [saving, setSaving] = useState<boolean>(false)
-  const [testing, setTesting] = useState<boolean>(false)
-  const [testResult, setTestResult] = useState<api.TestResult | null>(null)
-  const [running, setRunning] = useState<boolean>(false)
+
+  // Polling state
+  const [polling, setPolling] = useState(false)
+
+  // React Query hooks
+  const { data: connector, isLoading, error: connError, refetch: refetchConnector } = useConnector(id!)
+  const { data: jobs = [], refetch: refetchJobs } = useConnectorJobs(id!, polling ? 3000 : false)
+  const updateMut = useUpdateConnector()
+  const deleteMut = useDeleteConnector()
+  const testMut = useTestConnector()
+  const runMut = useRunConnector()
+  const uploadMut = useUploadCSV()
+
+  // Local state
+  const [testResult, setTestResult] = useState<TestResult | null>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  const [uploading, setUploading] = useState<boolean>(false)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
+    open: false,
+    message: '',
+    severity: 'success',
+  })
 
-  const fetchConnector = useCallback(async (): Promise<void> => {
-    try {
-      const res = await api.getConnector(id!)
-      const data = res.data
-      if (!data) {
-        setError('Connector not found.')
-        setLoading(false)
-        return
-      }
-      setConnector(data)
-      setConfigText(JSON.stringify(data.config || {}, null, 2))
-      setCronText(data.cron_expression || '')
-    } catch {
-      setError('Failed to load connector.')
-    } finally {
-      setLoading(false)
-    }
-  }, [id])
+  const showSnack = (message: string, severity: 'success' | 'error') => {
+    setSnackbar({ open: true, message, severity })
+  }
 
-  const fetchJobs = useCallback(async (): Promise<api.ConnectorJob[]> => {
-    try {
-      const res = await api.getConnectorJobs(id!)
-      const jobList = Array.isArray(res.data) ? res.data : (res.data as api.PaginatedResponse<api.ConnectorJob>).items || []
-      setJobs(jobList)
-      return jobList
-    } catch {
-      // Jobs endpoint may not exist yet
-      return []
-    }
-  }, [id])
+  // Config form
+  const {
+    register,
+    handleSubmit,
+    reset: resetConfig,
+    watch,
+    formState: { errors: configErrors },
+  } = useForm<ConfigFormValues>({
+    resolver: zodResolver(configSchema),
+    defaultValues: { config: '{}', cron_expression: '' },
+  })
 
-  const stopPolling = useCallback((): void => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current)
-      pollRef.current = null
-    }
-  }, [])
+  const cronValue = watch('cron_expression')
 
-  const startPolling = useCallback((): void => {
-    stopPolling()
-    pollRef.current = setInterval(async () => {
-      const jobList = await fetchJobs()
-      if (!jobList.some((j) => j.status === 'running' || j.status === 'queued')) {
-        stopPolling()
-        fetchConnector()
-      }
-    }, 3000)
-  }, [fetchJobs, fetchConnector, stopPolling])
-
+  // Sync form when connector data loads
   useEffect(() => {
-    const init = async (): Promise<void> => {
-      await fetchConnector()
-      const jobList = await fetchJobs()
-      if (jobList.some((j) => j.status === 'running' || j.status === 'queued')) {
-        startPolling()
-      }
-    }
-    init()
-    return () => stopPolling()
-  }, [fetchConnector, fetchJobs, startPolling, stopPolling])
-
-  const handleSaveConfig = async (): Promise<void> => {
-    setError('')
-    setSuccess('')
-    setSaving(true)
-    try {
-      let parsedConfig: Record<string, unknown>
-      try {
-        parsedConfig = JSON.parse(configText)
-      } catch {
-        setError('Config must be valid JSON.')
-        setSaving(false)
-        return
-      }
-      await api.updateConnector(id!, {
-        config: parsedConfig,
-        cron_expression: cronText || undefined,
+    if (connector) {
+      resetConfig({
+        config: JSON.stringify(connector.config || {}, null, 2),
+        cron_expression: connector.cron_expression || '',
       })
-      setSuccess('Connector updated.')
-      fetchConnector()
+    }
+  }, [connector, resetConfig])
+
+  // Auto-start/stop polling when jobs have running status
+  useEffect(() => {
+    const hasRunning = jobs.some((j) => j.status === 'running' || j.status === 'queued')
+    if (hasRunning && !polling) {
+      setPolling(true)
+    } else if (!hasRunning && polling) {
+      setPolling(false)
+      refetchConnector()
+    }
+  }, [jobs, polling, refetchConnector])
+
+  // Handlers
+  const onSaveConfig = async (values: ConfigFormValues) => {
+    try {
+      await updateMut.mutateAsync({
+        id: id!,
+        data: {
+          config: JSON.parse(values.config),
+          cron_expression: values.cron_expression || undefined,
+        },
+      })
+      showSnack('Connector updated.', 'success')
     } catch (err: unknown) {
-      const axiosErr = err as AxiosErrorResponse
-      setError(axiosErr.response?.data?.detail || 'Failed to update connector.')
-    } finally {
-      setSaving(false)
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to update connector.'
+      showSnack(msg, 'error')
     }
   }
 
-  const handleTest = async (): Promise<void> => {
+  const handleTest = async () => {
     setTestResult(null)
-    setTesting(true)
-    setError('')
     try {
-      const res = await api.testConnector(id!)
-      setTestResult(res.data)
+      const result = await testMut.mutateAsync(id!)
+      setTestResult(result)
     } catch (err: unknown) {
-      const axiosErr = err as AxiosErrorResponse
-      setTestResult({ success: false, error: axiosErr.response?.data?.detail || 'Test failed.' })
-    } finally {
-      setTesting(false)
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Test failed.'
+      setTestResult({ success: false, error: detail })
     }
   }
 
-  const handleRun = async (): Promise<void> => {
-    setError('')
-    setSuccess('')
-    setRunning(true)
+  const handleRun = async () => {
     try {
-      await api.runConnector(id!)
-      setSuccess('Connector run started.')
-      startPolling()
-      fetchJobs()
+      await runMut.mutateAsync(id!)
+      showSnack('Connector run started.', 'success')
+      setPolling(true)
+      refetchJobs()
     } catch (err: unknown) {
-      const axiosErr = err as AxiosErrorResponse
-      setError(axiosErr.response?.data?.detail || 'Failed to start connector run.')
-    } finally {
-      setRunning(false)
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to start connector run.'
+      showSnack(msg, 'error')
     }
   }
 
-  const handleToggleEnabled = async (): Promise<void> => {
-    setError('')
+  const handleToggleEnabled = async () => {
+    if (!connector) return
     try {
-      await api.updateConnector(id!, { enabled: !connector!.enabled })
-      fetchConnector()
+      await updateMut.mutateAsync({ id: id!, data: { enabled: !connector.enabled } })
     } catch (err: unknown) {
-      const axiosErr = err as AxiosErrorResponse
-      setError(axiosErr.response?.data?.detail || 'Failed to toggle connector.')
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to toggle connector.'
+      showSnack(msg, 'error')
     }
   }
 
-  const handleUpload = async (): Promise<void> => {
-    if (!selectedFile) return
-    setError('')
-    setSuccess('')
-    setUploading(true)
+  const handleDelete = async () => {
     try {
-      const res = await api.uploadCSV(id!, selectedFile)
-      setSuccess(`Upload complete. ${res.data.records_ingested ?? 'Records'} ingested.`)
-      setSelectedFile(null)
-      fetchJobs()
-    } catch (err: unknown) {
-      const axiosErr = err as AxiosErrorResponse
-      setError(axiosErr.response?.data?.detail || 'Upload failed.')
-    } finally {
-      setUploading(false)
-    }
-  }
-
-  const handleDelete = async (): Promise<void> => {
-    if (!window.confirm('Delete this connector? This cannot be undone.')) return
-    try {
-      await api.deleteConnector(id!)
+      await deleteMut.mutateAsync(id!)
       navigate('/connectors', { replace: true })
     } catch (err: unknown) {
-      const axiosErr = err as AxiosErrorResponse
-      setError(axiosErr.response?.data?.detail || 'Failed to delete connector.')
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to delete connector.'
+      showSnack(msg, 'error')
+    }
+    setDeleteDialogOpen(false)
+  }
+
+  const handleUpload = async () => {
+    if (!selectedFile) return
+    try {
+      const res = await uploadMut.mutateAsync({ connectorId: id!, file: selectedFile })
+      showSnack(`Upload complete. ${res.data.records_ingested ?? 'Records'} ingested.`, 'success')
+      setSelectedFile(null)
+      refetchJobs()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Upload failed.'
+      showSnack(msg, 'error')
     }
   }
 
-  const jobBadge = (status: string): string => {
-    const map: Record<string, string> = {
-      completed: 'badge-completed',
-      success: 'badge-success',
-      failed: 'badge-failed',
-      error: 'badge-error',
-      running: 'badge-running',
-      queued: 'badge-queued',
-      pending: 'badge-pending',
-    }
-    return `badge ${map[status] || 'badge-info'}`
+  // Loading / error states
+  if (isLoading) {
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
+        <CircularProgress />
+      </Box>
+    )
   }
 
-  if (loading) return <div className="loading">Loading connector...</div>
-  if (!connector) return <div className="error-msg">Connector not found.</div>
+  if (connError || !connector) {
+    return (
+      <Alert severity="error">Connector not found.</Alert>
+    )
+  }
 
   const isFileType = connector.connector_type === 'adcs_file' || connector.connector_type === 'csv_file'
 
   return (
-    <div>
-      {/* Header */}
-      <div className="detail-header">
-        <h1>{connector.name}</h1>
-        <div className="detail-meta">
-          <span>Type: <strong>{connector.connector_type}</strong></span>
-          <span>Enclave: <strong>{connector.enclave_name || connector.enclave_id}</strong></span>
-          <span>
-            Status:{' '}
-            <span className={connector.enabled ? 'badge badge-active' : 'badge badge-disabled'}>
-              {connector.enabled ? 'Enabled' : 'Disabled'}
-            </span>
-          </span>
-        </div>
-      </div>
+    <>
+      {/* Breadcrumbs */}
+      <Breadcrumbs sx={{ mb: 2 }}>
+        <Link component={RouterLink} to="/connectors" underline="hover" color="inherit">
+          Connectors
+        </Link>
+        <Typography color="text.primary">{connector.name}</Typography>
+      </Breadcrumbs>
 
-      {error && <div className="error-msg">{error}</div>}
-      {success && <div className="success-msg">{success}</div>}
+      {/* Header info */}
+      <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }} flexWrap="wrap" useFlexGap>
+        <Typography variant="body2" color="text.secondary">
+          Type: <strong>{connector.connector_type}</strong>
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Enclave: <strong>{connector.enclave_name || connector.enclave_id}</strong>
+        </Typography>
+        <Chip
+          label={connector.enabled ? 'Enabled' : 'Disabled'}
+          color={connector.enabled ? 'success' : 'default'}
+          variant={connector.enabled ? 'filled' : 'outlined'}
+        />
+      </Stack>
 
       {/* Actions */}
-      <div className="card">
-        <div className="card-header">
-          <h2>Actions</h2>
-        </div>
-        <div className="btn-group">
-          <button className="btn btn-primary" onClick={handleTest} disabled={testing}>
-            {testing ? 'Testing...' : 'Test Connection'}
-          </button>
-          <button className="btn btn-success" onClick={handleRun} disabled={running}>
-            {running ? 'Starting...' : 'Run Now'}
-          </button>
-          <button className="btn btn-warning" onClick={handleToggleEnabled}>
-            {connector.enabled ? 'Disable' : 'Enable'}
-          </button>
-          <button className="btn btn-danger" onClick={handleDelete}>Delete</button>
-        </div>
-        {testResult && (
-          <div style={{ marginTop: '1rem' }}>
-            {testResult.success ? (
-              <div className="success-msg">Connection test passed. {testResult.message || ''}</div>
-            ) : (
-              <div className="error-msg">Connection test failed: {testResult.error || 'Unknown error'}</div>
-            )}
-          </div>
-        )}
-      </div>
+      <Card sx={{ mb: 2 }}>
+        <CardHeader title="Actions" />
+        <CardContent>
+          <ButtonGroup variant="outlined" sx={{ flexWrap: 'wrap' }}>
+            <Button onClick={handleTest} disabled={testMut.isPending} color="primary">
+              {testMut.isPending ? 'Testing...' : 'Test Connection'}
+            </Button>
+            <Button onClick={handleRun} disabled={runMut.isPending} color="success">
+              {runMut.isPending ? 'Starting...' : 'Run Now'}
+            </Button>
+            <Button onClick={handleToggleEnabled} color="warning">
+              {connector.enabled ? 'Disable' : 'Enable'}
+            </Button>
+            <Button onClick={() => setDeleteDialogOpen(true)} color="error">
+              Delete
+            </Button>
+          </ButtonGroup>
 
-      {/* Config */}
-      <div className="card">
-        <div className="card-header">
-          <h2>Configuration</h2>
-        </div>
-        <div className="form-group">
-          <label>Config (JSON)</label>
-          <textarea
-            value={configText}
-            onChange={(e) => setConfigText(e.target.value)}
-            rows={8}
-          />
-        </div>
-        <div className="form-group">
-          <label>Cron Expression</label>
-          <input
-            type="text"
-            value={cronText}
-            onChange={(e) => setCronText(e.target.value)}
-            placeholder="e.g. 0 2 * * *"
-          />
-          <small style={{ color: '#666', fontSize: '0.8rem' }}>
-            Schedule: {describeCron(cronText)}
-          </small>
-        </div>
-        <button className="btn btn-primary btn-sm" onClick={handleSaveConfig} disabled={saving}>
-          {saving ? 'Saving...' : 'Save Changes'}
-        </button>
-      </div>
+          {testResult && (
+            <Alert severity={testResult.success ? 'success' : 'error'} sx={{ mt: 2 }}>
+              {testResult.success
+                ? `Connection test passed. ${testResult.message || ''}`
+                : `Connection test failed: ${testResult.error || 'Unknown error'}`}
+            </Alert>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Configuration */}
+      <Card sx={{ mb: 2 }}>
+        <CardHeader title="Configuration" />
+        <CardContent>
+          <Box component="form" onSubmit={handleSubmit(onSaveConfig)} noValidate>
+            <TextField
+              label="Config (JSON)"
+              multiline
+              minRows={6}
+              {...register('config')}
+              error={!!configErrors.config}
+              helperText={configErrors.config?.message}
+              sx={{ mb: 2, '& textarea': { fontFamily: 'monospace', fontSize: '0.85rem' } }}
+            />
+            <TextField
+              label="Cron Expression"
+              {...register('cron_expression')}
+              placeholder="e.g. 0 2 * * *"
+              helperText={`Schedule: ${describeCron(cronValue || '')}`}
+              sx={{ mb: 2 }}
+            />
+            <Button
+              type="submit"
+              variant="contained"
+              disabled={updateMut.isPending}
+            >
+              {updateMut.isPending ? 'Saving...' : 'Save Changes'}
+            </Button>
+          </Box>
+        </CardContent>
+      </Card>
 
       {/* File Upload (for adcs_file / csv_file types) */}
       {isFileType && (
-        <div className="card">
-          <div className="card-header">
-            <h2>File Upload</h2>
-          </div>
-          <p style={{ marginBottom: '1rem', fontSize: '0.85rem', color: '#666' }}>
-            Upload a CSV file to ingest identities for this connector.
-          </p>
-          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
-            <input
-              type="file"
-              accept=".csv,.tsv,.txt"
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setSelectedFile(e.target.files?.[0] || null)}
-            />
-            <button
-              className="btn btn-primary btn-sm"
-              onClick={handleUpload}
-              disabled={!selectedFile || uploading}
-            >
-              {uploading ? 'Uploading...' : 'Upload'}
-            </button>
-          </div>
-        </div>
+        <Card sx={{ mb: 2 }}>
+          <CardHeader title="File Upload" />
+          <CardContent>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Upload a CSV file to ingest identities for this connector.
+            </Typography>
+            <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" useFlexGap>
+              <Button variant="outlined" component="label">
+                Choose File
+                <input
+                  type="file"
+                  hidden
+                  accept=".csv,.tsv,.txt"
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => setSelectedFile(e.target.files?.[0] || null)}
+                />
+              </Button>
+              {selectedFile && (
+                <Typography variant="body2">{selectedFile.name}</Typography>
+              )}
+              <Button
+                variant="contained"
+                onClick={handleUpload}
+                disabled={!selectedFile || uploadMut.isPending}
+              >
+                {uploadMut.isPending ? 'Uploading...' : 'Upload'}
+              </Button>
+            </Stack>
+            {uploadMut.isPending && <LinearProgress sx={{ mt: 1 }} />}
+          </CardContent>
+        </Card>
       )}
 
       {/* Job History */}
-      <div className="card">
-        <div className="card-header">
-          <h2>Job History</h2>
-          <button className="btn btn-secondary btn-sm" onClick={() => { fetchJobs() }}>Refresh</button>
-        </div>
-        {jobs.length === 0 ? (
-          <p style={{ color: '#999', fontSize: '0.85rem' }}>No jobs recorded yet.</p>
-        ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Status</th>
-                <th>Started</th>
-                <th>Finished</th>
-                <th>Found</th>
-                <th>Ingested</th>
-                <th>Error</th>
-              </tr>
-            </thead>
-            <tbody>
-              {jobs.map((j, idx) => (
-                <tr key={j.id || idx}>
-                  <td><span className={jobBadge(j.status)}>{j.status}</span></td>
-                  <td>{j.started_at ? new Date(j.started_at).toLocaleString() : '--'}</td>
-                  <td>{j.finished_at ? new Date(j.finished_at).toLocaleString() : '--'}</td>
-                  <td>{j.records_found ?? '--'}</td>
-                  <td>{j.records_ingested ?? '--'}</td>
-                  <td style={{ maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {j.error || '--'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </div>
+      <Card sx={{ mb: 2 }}>
+        <CardHeader
+          title="Job History"
+          action={
+            <Button
+              variant="outlined"
+              startIcon={<RefreshIcon />}
+              onClick={() => refetchJobs()}
+            >
+              Refresh
+            </Button>
+          }
+        />
+        <CardContent>
+          {jobs.length === 0 ? (
+            <Typography color="text.secondary" variant="body2">
+              No jobs recorded yet.
+            </Typography>
+          ) : (
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Status</TableCell>
+                  <TableCell>Started</TableCell>
+                  <TableCell>Finished</TableCell>
+                  <TableCell>Found</TableCell>
+                  <TableCell>Ingested</TableCell>
+                  <TableCell>Error</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {jobs.map((j, idx) => (
+                  <TableRow key={j.id || idx} hover>
+                    <TableCell>
+                      <Chip label={j.status} color={jobChipColor(j.status)} />
+                    </TableCell>
+                    <TableCell>
+                      {j.started_at ? new Date(j.started_at).toLocaleString() : '--'}
+                    </TableCell>
+                    <TableCell>
+                      {j.finished_at ? new Date(j.finished_at).toLocaleString() : '--'}
+                    </TableCell>
+                    <TableCell>{j.records_found ?? '--'}</TableCell>
+                    <TableCell>{j.records_ingested ?? '--'}</TableCell>
+                    <TableCell sx={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {j.error || '--'}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
+        <DialogTitle>Delete Connector</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Delete this connector? This cannot be undone.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
+          <Button onClick={handleDelete} color="error" variant="contained">
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Snackbar */}
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={4000}
+        onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+          severity={snackbar.severity}
+          variant="filled"
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
+    </>
   )
 }

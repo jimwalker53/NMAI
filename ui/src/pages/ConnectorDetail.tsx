@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback, useRef, ChangeEvent } from 'react'
+import React, { useState, useEffect, ChangeEvent } from 'react'
 import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom'
-import { useForm } from 'react-hook-form'
+import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
@@ -8,7 +8,6 @@ import {
   Box,
   Breadcrumbs,
   Button,
-  ButtonGroup,
   Card,
   CardContent,
   CardHeader,
@@ -19,11 +18,14 @@ import {
   DialogContent,
   DialogContentText,
   DialogTitle,
+  Divider,
+  FormControlLabel,
   LinearProgress,
   Link,
-  Paper,
+  MenuItem,
   Snackbar,
   Stack,
+  Switch,
   Table,
   TableBody,
   TableCell,
@@ -32,7 +34,11 @@ import {
   TextField,
   Typography,
 } from '@mui/material'
+import PlayArrowIcon from '@mui/icons-material/PlayArrow'
+import NetworkCheckIcon from '@mui/icons-material/NetworkCheck'
 import RefreshIcon from '@mui/icons-material/Refresh'
+import DeleteIcon from '@mui/icons-material/Delete'
+import UploadFileIcon from '@mui/icons-material/UploadFile'
 import {
   TestResult,
   useConnector,
@@ -49,8 +55,11 @@ import {
 function describeCron(expr: string): string {
   if (!expr) return 'Not scheduled'
   const parts = expr.trim().split(/\s+/)
-  if (parts.length !== 5) return expr
+  if (parts.length !== 5) return 'Invalid cron expression (need 5 fields: min hour dom mon dow)'
   const [min, hr, dom, mon, dow] = parts
+  if (min === '*' && hr === '*' && dom === '*' && mon === '*' && dow === '*') return 'Every minute'
+  if (min.startsWith('*/')) return `Every ${min.slice(2)} minutes`
+  if (hr.startsWith('*/')) return `Every ${hr.slice(2)} hours`
   if (min === '0' && hr !== '*' && dom === '*' && mon === '*' && dow === '*') {
     return `Daily at ${hr.padStart(2, '0')}:00`
   }
@@ -58,33 +67,70 @@ function describeCron(expr: string): string {
     const days: Record<string, string> = { 0: 'Sun', 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri', 6: 'Sat' }
     return `${days[dow] || dow} at ${hr.padStart(2, '0')}:${min.padStart(2, '0')}`
   }
-  if (min === '*' && hr === '*' && dom === '*' && mon === '*' && dow === '*') {
-    return 'Every minute'
-  }
-  if (min.startsWith('*/')) {
-    return `Every ${min.slice(2)} minutes`
-  }
-  return expr
+  return `Cron: ${expr}`
 }
 
-// ── Config form schema ───────────────────────────────────────────────
+function isValidCron(expr: string): boolean {
+  if (!expr) return true
+  const parts = expr.trim().split(/\s+/)
+  return parts.length === 5
+}
 
-const configSchema = z.object({
-  config: z.string().refine(
-    (v) => {
-      try {
-        JSON.parse(v)
-        return true
-      } catch {
-        return false
-      }
-    },
-    'Config must be valid JSON',
-  ),
+// ── Type-specific config schemas ────────────────────────────────────
+
+interface ADLDAPConfig {
+  server: string
+  port: number
+  use_ssl: boolean
+  bind_dn: string
+  bind_password: string
+  search_base: string
+  search_filter: string
+}
+
+interface ADCSFileConfig {
+  delimiter: string
+  encoding: string
+}
+
+interface ADCSRemoteConfig {
+  ca_host: string
+  ca_name: string
+  use_ssl: boolean
+  username: string
+  password: string
+}
+
+const AD_LDAP_DEFAULTS: ADLDAPConfig = {
+  server: '',
+  port: 389,
+  use_ssl: false,
+  bind_dn: '',
+  bind_password: '',
+  search_base: '',
+  search_filter: '(&(objectCategory=person)(objectClass=user)(servicePrincipalName=*))',
+}
+
+const ADCS_FILE_DEFAULTS: ADCSFileConfig = {
+  delimiter: ',',
+  encoding: 'utf-8',
+}
+
+const ADCS_REMOTE_DEFAULTS: ADCSRemoteConfig = {
+  ca_host: '',
+  ca_name: '',
+  use_ssl: true,
+  username: '',
+  password: '',
+}
+
+// ── Main form schema ────────────────────────────────────────────────
+
+const detailSchema = z.object({
   cron_expression: z.string().optional(),
 })
 
-type ConfigFormValues = z.infer<typeof configSchema>
+type DetailFormValues = z.infer<typeof detailSchema>
 
 // ── Job status chip color helper ────────────────────────────────────
 
@@ -106,7 +152,202 @@ function jobChipColor(status: string): 'success' | 'error' | 'info' | 'warning' 
   }
 }
 
-// ── Component ────────────────────────────────────────────────────────
+// ── AD LDAP Config Form ─────────────────────────────────────────────
+
+function ADLDAPConfigForm({
+  config,
+  onChange,
+}: {
+  config: ADLDAPConfig
+  onChange: (c: ADLDAPConfig) => void
+}) {
+  const update = (field: keyof ADLDAPConfig, value: string | number | boolean) => {
+    onChange({ ...config, [field]: value })
+  }
+
+  return (
+    <Stack spacing={2}>
+      <Stack direction="row" spacing={2}>
+        <TextField
+          label="LDAP Server"
+          value={config.server}
+          onChange={(e) => update('server', e.target.value)}
+          placeholder="ldap://dc01.corp.local"
+          sx={{ flex: 2 }}
+        />
+        <TextField
+          label="Port"
+          type="number"
+          value={config.port}
+          onChange={(e) => update('port', Number(e.target.value))}
+          sx={{ width: 100 }}
+        />
+        <FormControlLabel
+          control={
+            <Switch
+              checked={config.use_ssl}
+              onChange={(e) => update('use_ssl', e.target.checked)}
+            />
+          }
+          label="SSL"
+          sx={{ ml: 0 }}
+        />
+      </Stack>
+      <TextField
+        label="Bind DN"
+        value={config.bind_dn}
+        onChange={(e) => update('bind_dn', e.target.value)}
+        placeholder="CN=svc-nmia,OU=ServiceAccounts,DC=corp,DC=local"
+      />
+      <TextField
+        label="Bind Password"
+        type="password"
+        value={config.bind_password}
+        onChange={(e) => update('bind_password', e.target.value)}
+      />
+      <TextField
+        label="Search Base"
+        value={config.search_base}
+        onChange={(e) => update('search_base', e.target.value)}
+        placeholder="DC=corp,DC=local"
+      />
+      <TextField
+        label="Search Filter"
+        value={config.search_filter}
+        onChange={(e) => update('search_filter', e.target.value)}
+        placeholder="(&(objectCategory=person)(objectClass=user)(servicePrincipalName=*))"
+        multiline
+        minRows={2}
+        sx={{ '& textarea': { fontFamily: 'monospace', fontSize: '0.85rem' } }}
+      />
+    </Stack>
+  )
+}
+
+// ── ADCS File Config Form ───────────────────────────────────────────
+
+function ADCSFileConfigForm({
+  config,
+  onChange,
+}: {
+  config: ADCSFileConfig
+  onChange: (c: ADCSFileConfig) => void
+}) {
+  return (
+    <Stack direction="row" spacing={2}>
+      <TextField
+        label="CSV Delimiter"
+        value={config.delimiter}
+        onChange={(e) => onChange({ ...config, delimiter: e.target.value })}
+        sx={{ width: 120 }}
+      />
+      <TextField
+        label="Encoding"
+        select
+        value={config.encoding}
+        onChange={(e) => onChange({ ...config, encoding: e.target.value })}
+        sx={{ width: 160 }}
+      >
+        <MenuItem value="utf-8">UTF-8</MenuItem>
+        <MenuItem value="utf-16">UTF-16</MenuItem>
+        <MenuItem value="latin-1">Latin-1</MenuItem>
+      </TextField>
+    </Stack>
+  )
+}
+
+// ── ADCS Remote Config Form ─────────────────────────────────────────
+
+function ADCSRemoteConfigForm({
+  config,
+  onChange,
+}: {
+  config: ADCSRemoteConfig
+  onChange: (c: ADCSRemoteConfig) => void
+}) {
+  const update = (field: keyof ADCSRemoteConfig, value: string | boolean) => {
+    onChange({ ...config, [field]: value })
+  }
+
+  return (
+    <Stack spacing={2}>
+      <Stack direction="row" spacing={2}>
+        <TextField
+          label="CA Host"
+          value={config.ca_host}
+          onChange={(e) => update('ca_host', e.target.value)}
+          placeholder="ca01.corp.local"
+          sx={{ flex: 1 }}
+        />
+        <TextField
+          label="CA Name"
+          value={config.ca_name}
+          onChange={(e) => update('ca_name', e.target.value)}
+          placeholder="Corp-Issuing-CA"
+          sx={{ flex: 1 }}
+        />
+        <FormControlLabel
+          control={
+            <Switch
+              checked={config.use_ssl}
+              onChange={(e) => update('use_ssl', e.target.checked)}
+            />
+          }
+          label="SSL"
+        />
+      </Stack>
+      <TextField
+        label="Username"
+        value={config.username}
+        onChange={(e) => update('username', e.target.value)}
+        placeholder="DOMAIN\\svc-nmia"
+      />
+      <TextField
+        label="Password"
+        type="password"
+        value={config.password}
+        onChange={(e) => update('password', e.target.value)}
+      />
+    </Stack>
+  )
+}
+
+// ── JSON Fallback Config Form ───────────────────────────────────────
+
+function JSONConfigForm({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (v: string) => void
+}) {
+  const [error, setError] = useState('')
+
+  const handleChange = (v: string) => {
+    onChange(v)
+    try {
+      JSON.parse(v)
+      setError('')
+    } catch {
+      setError('Invalid JSON')
+    }
+  }
+
+  return (
+    <TextField
+      label="Config (JSON)"
+      multiline
+      minRows={6}
+      value={value}
+      onChange={(e) => handleChange(e.target.value)}
+      error={!!error}
+      helperText={error}
+      sx={{ '& textarea': { fontFamily: 'monospace', fontSize: '0.85rem' } }}
+    />
+  )
+}
+
+// ── Main Component ──────────────────────────────────────────────────
 
 export default function ConnectorDetail(): React.ReactElement {
   const { id } = useParams<{ id: string }>()
@@ -124,6 +365,12 @@ export default function ConnectorDetail(): React.ReactElement {
   const runMut = useRunConnector()
   const uploadMut = useUploadCSV()
 
+  // Config state (type-specific)
+  const [adLdapConfig, setAdLdapConfig] = useState<ADLDAPConfig>(AD_LDAP_DEFAULTS)
+  const [adcsFileConfig, setAdcsFileConfig] = useState<ADCSFileConfig>(ADCS_FILE_DEFAULTS)
+  const [adcsRemoteConfig, setAdcsRemoteConfig] = useState<ADCSRemoteConfig>(ADCS_REMOTE_DEFAULTS)
+  const [jsonConfig, setJsonConfig] = useState('{}')
+
   // Local state
   const [testResult, setTestResult] = useState<TestResult | null>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -138,29 +385,61 @@ export default function ConnectorDetail(): React.ReactElement {
     setSnackbar({ open: true, message, severity })
   }
 
-  // Config form
+  // Cron form
   const {
     register,
     handleSubmit,
-    reset: resetConfig,
+    reset: resetForm,
     watch,
-    formState: { errors: configErrors },
-  } = useForm<ConfigFormValues>({
-    resolver: zodResolver(configSchema),
-    defaultValues: { config: '{}', cron_expression: '' },
+  } = useForm<DetailFormValues>({
+    resolver: zodResolver(detailSchema),
+    defaultValues: { cron_expression: '' },
   })
 
   const cronValue = watch('cron_expression')
 
+  // Determine connector type category
+  const connectorType = connector?.connector_type || ''
+  const isADLDAP = connectorType === 'ad_ldap'
+  const isADCSFile = connectorType === 'adcs_file'
+  const isADCSRemote = connectorType === 'adcs_remote'
+  const isFileType = isADCSFile || connectorType === 'csv_file'
+
   // Sync form when connector data loads
   useEffect(() => {
     if (connector) {
-      resetConfig({
-        config: JSON.stringify(connector.config || {}, null, 2),
-        cron_expression: connector.cron_expression || '',
-      })
+      resetForm({ cron_expression: connector.cron_expression || '' })
+
+      const cfg = connector.config || {}
+
+      if (isADLDAP) {
+        setAdLdapConfig({
+          server: (cfg.server as string) || '',
+          port: (cfg.port as number) || 389,
+          use_ssl: (cfg.use_ssl as boolean) || false,
+          bind_dn: (cfg.bind_dn as string) || '',
+          bind_password: (cfg.bind_password as string) || '',
+          search_base: (cfg.search_base as string) || '',
+          search_filter: (cfg.search_filter as string) || AD_LDAP_DEFAULTS.search_filter,
+        })
+      } else if (isADCSFile) {
+        setAdcsFileConfig({
+          delimiter: (cfg.delimiter as string) || ',',
+          encoding: (cfg.encoding as string) || 'utf-8',
+        })
+      } else if (isADCSRemote) {
+        setAdcsRemoteConfig({
+          ca_host: (cfg.ca_host as string) || '',
+          ca_name: (cfg.ca_name as string) || '',
+          use_ssl: (cfg.use_ssl as boolean) ?? true,
+          username: (cfg.username as string) || '',
+          password: (cfg.password as string) || '',
+        })
+      } else {
+        setJsonConfig(JSON.stringify(cfg, null, 2))
+      }
     }
-  }, [connector, resetConfig])
+  }, [connector, resetForm, isADLDAP, isADCSFile, isADCSRemote])
 
   // Auto-start/stop polling when jobs have running status
   useEffect(() => {
@@ -173,13 +452,25 @@ export default function ConnectorDetail(): React.ReactElement {
     }
   }, [jobs, polling, refetchConnector])
 
+  // Build config object from current state
+  const buildConfig = (): Record<string, unknown> => {
+    if (isADLDAP) return { ...adLdapConfig }
+    if (isADCSFile) return { ...adcsFileConfig }
+    if (isADCSRemote) return { ...adcsRemoteConfig }
+    try {
+      return JSON.parse(jsonConfig)
+    } catch {
+      return {}
+    }
+  }
+
   // Handlers
-  const onSaveConfig = async (values: ConfigFormValues) => {
+  const onSaveConfig = async (values: DetailFormValues) => {
     try {
       await updateMut.mutateAsync({
         id: id!,
         data: {
-          config: JSON.parse(values.config),
+          config: buildConfig(),
           cron_expression: values.cron_expression || undefined,
         },
       })
@@ -257,12 +548,12 @@ export default function ConnectorDetail(): React.ReactElement {
   }
 
   if (connError || !connector) {
-    return (
-      <Alert severity="error">Connector not found.</Alert>
-    )
+    return <Alert severity="error">Connector not found.</Alert>
   }
 
-  const isFileType = connector.connector_type === 'adcs_file' || connector.connector_type === 'csv_file'
+  const connectorTypeLabel = connectorType
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
 
   return (
     <>
@@ -274,97 +565,121 @@ export default function ConnectorDetail(): React.ReactElement {
         <Typography color="text.primary">{connector.name}</Typography>
       </Breadcrumbs>
 
-      {/* Header info */}
+      {/* Header */}
       <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }} flexWrap="wrap" useFlexGap>
-        <Typography variant="body2" color="text.secondary">
-          Type: <strong>{connector.connector_type}</strong>
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          Enclave: <strong>{connector.enclave_name || connector.enclave_id}</strong>
-        </Typography>
+        <Typography variant="h5">{connector.name}</Typography>
+        <Chip label={connectorTypeLabel} variant="outlined" />
         <Chip
           label={connector.enabled ? 'Enabled' : 'Disabled'}
           color={connector.enabled ? 'success' : 'default'}
           variant={connector.enabled ? 'filled' : 'outlined'}
         />
+        <Typography variant="body2" color="text.secondary">
+          Enclave: {connector.enclave_name || connector.enclave_id}
+        </Typography>
       </Stack>
 
       {/* Actions */}
-      <Card sx={{ mb: 2 }}>
-        <CardHeader title="Actions" />
-        <CardContent>
-          <ButtonGroup variant="outlined" sx={{ flexWrap: 'wrap' }}>
-            <Button onClick={handleTest} disabled={testMut.isPending} color="primary">
-              {testMut.isPending ? 'Testing...' : 'Test Connection'}
-            </Button>
-            <Button onClick={handleRun} disabled={runMut.isPending} color="success">
-              {runMut.isPending ? 'Starting...' : 'Run Now'}
-            </Button>
-            <Button onClick={handleToggleEnabled} color="warning">
-              {connector.enabled ? 'Disable' : 'Enable'}
-            </Button>
-            <Button onClick={() => setDeleteDialogOpen(true)} color="error">
-              Delete
-            </Button>
-          </ButtonGroup>
+      <Stack direction="row" spacing={1} sx={{ mb: 3 }} flexWrap="wrap" useFlexGap>
+        <Button
+          variant="outlined"
+          startIcon={<NetworkCheckIcon />}
+          onClick={handleTest}
+          disabled={testMut.isPending}
+        >
+          {testMut.isPending ? 'Testing...' : 'Test'}
+        </Button>
+        <Button
+          variant="contained"
+          startIcon={<PlayArrowIcon />}
+          onClick={handleRun}
+          disabled={runMut.isPending}
+          color="success"
+        >
+          {runMut.isPending ? 'Starting...' : 'Run Now'}
+        </Button>
+        <Button variant="outlined" color="warning" onClick={handleToggleEnabled}>
+          {connector.enabled ? 'Disable' : 'Enable'}
+        </Button>
+        <Button
+          variant="outlined"
+          color="error"
+          startIcon={<DeleteIcon />}
+          onClick={() => setDeleteDialogOpen(true)}
+        >
+          Delete
+        </Button>
+      </Stack>
 
-          {testResult && (
-            <Alert severity={testResult.success ? 'success' : 'error'} sx={{ mt: 2 }}>
-              {testResult.success
-                ? `Connection test passed. ${testResult.message || ''}`
-                : `Connection test failed: ${testResult.error || 'Unknown error'}`}
-            </Alert>
-          )}
-        </CardContent>
-      </Card>
+      {testResult && (
+        <Alert severity={testResult.success ? 'success' : 'error'} sx={{ mb: 2 }}>
+          {testResult.success
+            ? `Connection test passed. ${testResult.message || ''}`
+            : `Connection test failed: ${testResult.error || 'Unknown error'}`}
+        </Alert>
+      )}
 
       {/* Configuration */}
-      <Card sx={{ mb: 2 }}>
+      <Card sx={{ mb: 3 }}>
         <CardHeader title="Configuration" />
         <CardContent>
           <Box component="form" onSubmit={handleSubmit(onSaveConfig)} noValidate>
+            {/* Type-specific config fields */}
+            {isADLDAP && (
+              <ADLDAPConfigForm config={adLdapConfig} onChange={setAdLdapConfig} />
+            )}
+            {isADCSFile && (
+              <ADCSFileConfigForm config={adcsFileConfig} onChange={setAdcsFileConfig} />
+            )}
+            {isADCSRemote && (
+              <ADCSRemoteConfigForm config={adcsRemoteConfig} onChange={setAdcsRemoteConfig} />
+            )}
+            {!isADLDAP && !isADCSFile && !isADCSRemote && (
+              <JSONConfigForm value={jsonConfig} onChange={setJsonConfig} />
+            )}
+
+            <Divider sx={{ my: 2 }} />
+
+            {/* Cron editor */}
             <TextField
-              label="Config (JSON)"
-              multiline
-              minRows={6}
-              {...register('config')}
-              error={!!configErrors.config}
-              helperText={configErrors.config?.message}
-              sx={{ mb: 2, '& textarea': { fontFamily: 'monospace', fontSize: '0.85rem' } }}
-            />
-            <TextField
-              label="Cron Expression"
+              label="Cron Schedule"
               {...register('cron_expression')}
               placeholder="e.g. 0 2 * * *"
-              helperText={`Schedule: ${describeCron(cronValue || '')}`}
+              helperText={
+                cronValue && !isValidCron(cronValue)
+                  ? 'Invalid: use 5 fields — min hour dom mon dow'
+                  : describeCron(cronValue || '')
+              }
+              error={!!cronValue && !isValidCron(cronValue)}
               sx={{ mb: 2 }}
             />
+
             <Button
               type="submit"
               variant="contained"
               disabled={updateMut.isPending}
             >
-              {updateMut.isPending ? 'Saving...' : 'Save Changes'}
+              {updateMut.isPending ? 'Saving...' : 'Save Configuration'}
             </Button>
           </Box>
         </CardContent>
       </Card>
 
-      {/* File Upload (for adcs_file / csv_file types) */}
+      {/* File Upload (for ADCS file / CSV types) */}
       {isFileType && (
-        <Card sx={{ mb: 2 }}>
+        <Card sx={{ mb: 3 }}>
           <CardHeader title="File Upload" />
           <CardContent>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Upload a CSV file to ingest identities for this connector.
+              Upload a CSV file to ingest certificate data for this connector.
             </Typography>
             <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" useFlexGap>
-              <Button variant="outlined" component="label">
+              <Button variant="outlined" component="label" startIcon={<UploadFileIcon />}>
                 Choose File
                 <input
                   type="file"
                   hidden
-                  accept=".csv,.tsv,.txt"
+                  accept=".csv,.tsv,.txt,.json"
                   onChange={(e: ChangeEvent<HTMLInputElement>) => setSelectedFile(e.target.files?.[0] || null)}
                 />
               </Button>
@@ -385,14 +700,15 @@ export default function ConnectorDetail(): React.ReactElement {
       )}
 
       {/* Job History */}
-      <Card sx={{ mb: 2 }}>
+      <Card sx={{ mb: 3 }}>
         <CardHeader
           title="Job History"
           action={
             <Button
-              variant="outlined"
+              variant="text"
               startIcon={<RefreshIcon />}
               onClick={() => refetchJobs()}
+              size="small"
             >
               Refresh
             </Button>
@@ -445,7 +761,7 @@ export default function ConnectorDetail(): React.ReactElement {
         <DialogTitle>Delete Connector</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            Delete this connector? This cannot be undone.
+            Delete &ldquo;{connector.name}&rdquo;? This action cannot be undone.
           </DialogContentText>
         </DialogContent>
         <DialogActions>

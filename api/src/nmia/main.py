@@ -1,10 +1,12 @@
 """FastAPI application entry point for the NMIA backend."""
 
 import logging
+import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import AsyncGenerator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from nmia.settings import settings
@@ -131,14 +133,37 @@ def health_check() -> dict:
 # -- Bootstrap status (unauthenticated) ---------------------------------------
 
 @app.get("/api/v1/bootstrap/status", tags=["bootstrap"])
-def bootstrap_status() -> dict:
+def bootstrap_status(response: Response) -> dict:
     """Return whether bootstrap is still required (no users exist)."""
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
     db = SessionLocal()
     try:
         user_count = db.query(User).count()
         return {"bootstrap_required": user_count == 0}
     finally:
         db.close()
+
+
+# -- API meta ----------------------------------------------------------------
+
+@app.get("/api/v1/meta", tags=["meta"])
+def api_meta() -> dict:
+    """Return service metadata (version, build, timestamp)."""
+    return {
+        "service": "nmia-api",
+        "version": os.environ.get("NMIA_VERSION", "0.1.0"),
+        "build": os.environ.get("NMIA_BUILD", "dev"),
+        "time": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# -- Collectors stub ----------------------------------------------------------
+
+@app.get("/api/v1/collectors", tags=["collectors"])
+def list_collectors() -> list:
+    """Placeholder: will list registered collectors once implemented."""
+    return []
 
 
 def run() -> None:

@@ -11,6 +11,7 @@ import ConnectorDetail from './pages/ConnectorDetail'
 import Identities from './pages/Identities'
 import IdentityDetail from './pages/IdentityDetail'
 import Reports from './pages/Reports'
+import Settings from './pages/Settings'
 
 export default function App(): React.ReactElement {
   return (
@@ -26,6 +27,7 @@ export default function App(): React.ReactElement {
           <Route path="enclaves" element={<Enclaves />} />
           <Route path="reports" element={<Reports />} />
           <Route path="users" element={<Users />} />
+          <Route path="settings" element={<Settings />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

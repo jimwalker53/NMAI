@@ -1,0 +1,15 @@
+[project]
+name = "nmia-collector"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "cryptography>=42.0",
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+]
+
+[project.scripts]
+nmia-collector = "nmia_collector.main:run"

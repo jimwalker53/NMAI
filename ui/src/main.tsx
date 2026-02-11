@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider, CssBaseline } from '@mui/material'
 import App from './App'
 import { theme } from './theme'
+import NotificationProvider from './notifications/NotificationProvider'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -17,9 +18,11 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <QueryClientProvider client={queryClient}>
       <ThemeProvider theme={theme}>
         <CssBaseline />
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
+        <NotificationProvider>
+          <BrowserRouter>
+            <App />
+          </BrowserRouter>
+        </NotificationProvider>
       </ThemeProvider>
     </QueryClientProvider>
   </React.StrictMode>,
